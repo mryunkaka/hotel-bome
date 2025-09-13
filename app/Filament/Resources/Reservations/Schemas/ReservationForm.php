@@ -6,6 +6,7 @@ use App\Models\Room;
 use App\Models\Guest;
 use App\Models\Reservation;
 use Filament\Support\RawJs;
+use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
@@ -544,6 +545,11 @@ class ReservationForm
                                 ->columnSpan(2),
 
                             Textarea::make('note')->label('Note')->rows(2)->columnSpan(5),
+                        ])
+                        ->extraItemActions([
+                            Action::make('hapus')
+                                ->requiresConfirmation()
+                                ->action(fn($record, $livewire) => $record->delete())
                         ]),
 
                 ])

@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Session;
 use BackedEnum;
+use App\Enums\Salutation;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Guest extends Model
 {
@@ -36,7 +37,7 @@ class Guest extends Model
     ];
 
     protected $casts = [
-        'salutation' => \App\Enums\Salutation::class,
+        'salutation' => Salutation::class,
         'birth_date'  => 'date',
         'issued_date' => 'date',
     ];

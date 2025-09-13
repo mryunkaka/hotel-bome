@@ -25,6 +25,8 @@ class ReservationGuest extends Model
         'expected_checkout',
         'actual_checkin',
         'actual_checkout',
+        'pov',
+        'breakfast',
         'note',
     ];
 
@@ -45,6 +47,11 @@ class ReservationGuest extends Model
     | Relationships
     |--------------------------------------------------------------------------
     */
+
+    public function group(): BelongsTo
+    {
+        return $this->belongsTo(ReservationGroup::class, 'group_id');
+    }
 
     public function reservation(): BelongsTo
     {

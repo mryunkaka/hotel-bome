@@ -21,6 +21,8 @@ return new class extends Migration
 
             // Identitas / penanggung per-guest
             $table->string('person', 150)->nullable();              // PIC baris ini (jika berbeda)
+            $table->string('pov', 150)->nullable();
+            $table->string('breakfast', 150)->nullable();
             $table->unsignedSmallInteger('jumlah_orang')->default(1); // total pax untuk baris ini
             $table->unsignedSmallInteger('male')->default(0);
             $table->unsignedSmallInteger('female')->default(0);

@@ -45,6 +45,16 @@ class Reservation extends Model
         'deposit'           => 'decimal:2',
     ];
 
+    public function getLengthOfStayAttribute(): ?int
+    {
+        if (! $this->expected_arrival || ! $this->expected_departure) {
+            return null;
+        }
+
+        return $this->expected_arrival->copy()->startOfDay()
+            ->diffInDays($this->expected_departure->copy()->startOfDay());
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Relationships

@@ -1,13 +1,26 @@
 @php
-    /** @var \App\Models\ReservationGuest|null $record */
-    $rg   = $getRecord();       // record ReservationGuest aktif
-    $res  = $rg?->reservation;
-    $guest= $rg?->guest;
-    $room = $rg?->room;
+    /** @var \App\Models\ReservationGuest|null $rg */
+    $rg      = $getRecord();
+    $res     = $rg?->reservation;
+    $company = $rg?->reservation?->group; // <- perbaikan di sini
+    $guest   = $rg?->guest;
+    $room    = $rg?->room;
 
     // helpers tampilan
     $fmt = fn($dt) => $dt ? \Illuminate\Support\Carbon::parse($dt)->format('d/m/Y H:i') : '-';
     $n   = fn($v) => is_numeric($v) ? number_format($v, 0, ',', '.') : $v;
+@endphp
+
+@php
+    $arrivalRaw   = $res?->expected_arrival;
+    $departureRaw = $res?->expected_departure;
+
+    $nights = null;
+    if ($arrivalRaw && $departureRaw) {
+        $arr = \Illuminate\Support\Carbon::parse($arrivalRaw)->startOfDay();
+        $dep = \Illuminate\Support\Carbon::parse($departureRaw)->startOfDay();
+        $nights = $arr->diffInDays($dep); // 13/09 → 15/09 = 2
+    }
 @endphp
 
 @if (!$rg)
@@ -80,6 +93,7 @@
             <div class="box">
                 <div class="reg-row"><div>Name</div><div>{{ $guest?->display_name ?? $guest?->name ?? '-' }}</div></div>
                 <div class="reg-row"><div>Address</div><div>{{ $guest?->address ?? '-' }}</div></div>
+                <div class="reg-row"><div>Check In</div><div>{{ $guest?->guest_type ?? '-' }}</div></div>
                 <div class="reg-row"><div>City/Country</div><div>{{ $guest?->city ?? '-' }}</div></div>
                 <div class="reg-row"><div>Nationality</div><div>{{ $guest?->nationality ?? '-' }}</div></div>
                 <div class="reg-row"><div>Profession</div><div>{{ $guest?->profession ?? '-' }}</div></div>
@@ -87,25 +101,9 @@
                     <div>Identity Card</div>
                     <div>{{ $guest?->id_type ?? '-' }} {{ $guest?->id_card ?? '' }}</div>
                 </div>
-                <div class="reg-row"><div>Phone No</div><div>{{ $guest?->phone ?? '-' }}</div></div>
-                <div class="reg-row"><div>Email</div><div>{{ $guest?->email ?? '-' }}</div></div>
+                <div class="reg-row"><div>Birth</div><div>{{ $guest?->birth_place ?? '' }}, {{$guest?->birth_date?->translatedFormat('d F Y') ?? '-' }}</div></div>
+                <div class="reg-row"><div>Issued</div><div>{{ $guest?->issued_place ?? '' }}, {{$guest?->issued_date?->translatedFormat('d F Y') ?? '-' }}</div></div>
                 <div class="sep"></div>
-                <div class="reg-row"><div>Purpose of Visit</div><div>{{ $res?->purpose ?? '-' }}</div></div>
-                <div class="reg-row"><div>Length of Stay</div><div>{{ $res?->length_of_stay ?? '-' }} Night(s)</div></div>
-                <div class="reg-row"><div>Arrival</div><div>{{ $fmt($res?->expected_arrival) }}</div></div>
-                <div class="reg-row"><div>Departure</div><div>{{ $fmt($res?->expected_departure) }}</div></div>
-                <div class="reg-row"><div>Charge To</div><div>{{ $rg?->charge_to ?? '-' }}</div></div>
-                <div class="reg-row">
-                    <div>Status</div>
-                    <div>
-                        <span class="tag">{{ $res?->status ?? 'DRAFT' }}</span>
-                        @if($rg?->actual_checkin) <span class="tag">Checked-In</span> @endif
-                    </div>
-                </div>
-            </div>
-
-            {{-- Kanan: Data Kamar & Tariff --}}
-            <div class="box">
                 <div class="reg-row"><div>Room No.</div><div>{{ $room?->room_no ?? '-' }} {{ $room?->type ? '— '.$room->type : '' }}</div></div>
                 <div class="reg-row"><div>Rate Type</div><div>{{ $res?->method ?? '-' }}</div></div>
 
@@ -136,7 +134,26 @@
                     <div class="muted">RATE ++</div>
                     <div class="big money">Rp {{ $n($rg?->room_rate ?? 0) }}</div>
                 </div>
+            </div>
 
+            {{-- Kanan: Data Kamar & Tariff --}}
+            <div class="box">
+                <div class="reg-row"><div>Purpose of Visit</div><div>{{ $rg?->pov ?? '-' }}</div></div>
+                <div class="reg-row"><div>Length of Stay</div><div>{{ $res?->length_of_stay ? $res->length_of_stay . ' Night(s)' : '-' }}</div></div>
+                <div class="reg-row"><div>Arrival</div><div>{{ $fmt($res?->expected_arrival) }}</div></div>
+                <div class="reg-row"><div>Departure</div><div>{{ $fmt($res?->expected_departure) }}</div></div>
+                <div class="reg-row"><div>Company</div><div>{{ $company?->name ?? '-' }}</div></div>
+                 <div class="reg-row"><div>Code</div><div>{{ $res?->option ?? '-' }}</div></div>
+                <div class="reg-row"><div>Charge To</div><div>{{ $rg?->charge_to ?? '-' }}</div></div>
+                <div class="reg-row"><div>Phone No</div><div>{{ $guest?->phone ?? '-' }}</div></div>
+                <div class="reg-row"><div>Email</div><div>{{ $guest?->email ?? '-' }}</div></div>
+                <div class="reg-row">
+                    <div>Status</div>
+                    <div>
+                        <span class="tag">{{ $res?->status ?? 'DRAFT' }}</span>
+                        @if($rg?->actual_checkin) <span class="tag">Checked-In</span> @endif
+                    </div>
+                </div>
                 <div class="sep"></div>
 
                 <div class="reg-row"><div>Short Remarks</div><div>{{ $rg?->note ?? '-' }}</div></div>

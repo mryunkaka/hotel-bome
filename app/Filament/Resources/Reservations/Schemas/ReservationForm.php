@@ -162,7 +162,7 @@ class ReservationForm
                             ->label('Reserved By Type')
                             ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
                             ->default('GUEST')
-                            ->live() // <- perlu agar visible() di bawah re-render saat diganti
+                            // ->live() 
                             ->columnSpan(12),
 
                         // --- Mode Guest: pilih Guest (dengan tombol + buat baru)
@@ -467,8 +467,6 @@ class ReservationForm
                                 ->rules(['required', 'distinct'])
                                 ->columnSpan(2),
 
-
-
                             // GUEST (tanpa relationship)
                             Select::make('guest_id')
                                 ->label('Guest')
@@ -511,7 +509,7 @@ class ReservationForm
                                 })
                                 ->getOptionLabelUsing(fn($value) => optional(\App\Models\Guest::find($value))->name)
                                 ->rules(['nullable', 'distinct'])
-                                ->columnSpan(4),
+                                ->columnSpan(2),
 
                             TextInput::make('room_rate')
                                 ->label('Rate')
@@ -524,16 +522,21 @@ class ReservationForm
                             Hidden::make('jumlah_orang'),
 
                             DateTimePicker::make('expected_checkin')
-                                ->label('Expected Check-in')
+                                ->label('Check-in')
                                 ->default(fn() => now()->setTime(12, 0))
                                 ->columnSpan(2),
 
                             DateTimePicker::make('expected_checkout')
-                                ->label('Expected Check-out')
+                                ->label('Check-out')
                                 ->default(fn() => now()->addDay()->setTime(12, 0))
                                 ->columnSpan(2),
 
-                            TextInput::make('person')->label('Person In Charge')->columnSpan(2),
+                            Select::make('breakfast')
+                                ->label('Breakfast')
+                                ->options(['Yes' => 'Yes', 'No' => 'No'])
+                                ->default('No')
+                                ->columnSpan(2),
+                            TextInput::make('person')->label('Person Charge')->columnSpan(2),
                             TextInput::make('male')->label('Male')->numeric()->default(1)->minValue(0)->columnSpan(1),
                             TextInput::make('female')->label('Female')->numeric()->default(0)->minValue(0)->columnSpan(1),
                             TextInput::make('children')->label('Children')->numeric()->default(0)->minValue(0)->columnSpan(1),
@@ -544,7 +547,9 @@ class ReservationForm
                                 ->default('GUEST')
                                 ->columnSpan(2),
 
-                            Textarea::make('note')->label('Note')->rows(2)->columnSpan(5),
+                            TextInput::make('pov')->label('Purpose of Visit')->columnSpan(2),
+
+                            TextInput::make('note')->label('Note')->columnSpan(3),
                         ])
                         ->extraItemActions([
                             Action::make('hapus')

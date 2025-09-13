@@ -3,96 +3,99 @@
 namespace App\Filament\Resources\Guests\Schemas;
 
 use Filament\Schemas\Schema;
+use Intervention\Image\ImageManager;
 use Filament\Forms\Components\Hidden;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Select;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\Storage;
-use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
+use Filament\Forms\Components\TextInput;
 
 // intervention/image v3 (core)
-use Intervention\Image\ImageManager;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\FileUpload;
 use Intervention\Image\Drivers\Gd\Driver as GdDriver;
 use Intervention\Image\Drivers\Imagick\Driver as ImagickDriver;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 class GuestForm
 {
     public static function configure(Schema $schema): Schema
     {
         return $schema->components([
+            // Scope hotel
             Hidden::make('hotel_id')
                 ->default(fn() => Session::get('active_hotel_id'))
-                ->dehydrated(true)
                 ->required(),
 
+            // Identitas dasar
+            Select::make('salutation')
+                ->label('Salutation')
+                ->options(
+                    fn() => collect(\App\Enums\Salutation::cases())
+                        ->mapWithKeys(function ($c) {
+                            // dukung BackedEnum & UnitEnum
+                            $value = $c instanceof \BackedEnum ? $c->value : $c->name;
+                            $label = ucfirst(strtolower($c->name));
+                            return [$value => $label];
+                        })->all()
+                )
+                ->native(false),
+
             TextInput::make('name')->required(),
-            TextInput::make('email')->label('Email address')->email(),
-            TextInput::make('phone')->tel(),
+
+            Select::make('guest_type')
+                ->label('Guest Type')
+                ->options([
+                    'DOMESTIC' => 'DOMESTIC',
+                    'INTERNASIONAL'    => 'INTERNASIONAL',
+                ])
+                ->native(false),
+
             TextInput::make('address'),
+            TextInput::make('city'),
+            TextInput::make('nationality'),
+            TextInput::make('profession'),
 
-            TextInput::make('nid_no')->label('NID'),
-            TextInput::make('passport_no'),
-            TextInput::make('father'),
-            TextInput::make('mother'),
-            TextInput::make('spouse'),
-            // NID attachment (image/pdf) — gambar DIKOMPRES, pdf disimpan apa adanya
-            FileUpload::make('nid_file_path')
-                ->label('NID Attachment')
+            // Dokumen identitas
+            Select::make('id_type')
+                ->label('ID Type')
+                ->options([
+                    'ID'             => 'National ID',
+                    'PASSPORT'       => 'Passport',
+                    'DRIVER_LICENSE' => 'Driver License',
+                    'OTHER'          => 'Other',
+                ])
+                ->native(false),
+
+            TextInput::make('id_card')->label('ID / Passport Number'),
+
+            FileUpload::make('id_card_file')
+                ->label('ID/Passport Attachment')
                 ->disk('public')
-                ->directory('guests/nid')
+                ->directory('guests/idcard')
                 ->preserveFilenames()
                 ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
                 ->getUploadedFileNameForStorageUsing(
                     fn(TemporaryUploadedFile $file): string => $file->getClientOriginalName()
                 )
                 ->saveUploadedFileUsing(function (TemporaryUploadedFile $file): string {
-                    if (str_starts_with($file->getMimeType(), 'image/')) {
-                        return self::storeCompressed($file, 'guests/nid');
-                    }
-                    // PDF → simpan apa adanya (overwrite)
-                    $path = 'guests/nid/' . $file->getClientOriginalName();
+                    $path = 'guests/idcard/' . $file->getClientOriginalName();
                     Storage::disk('public')->put($path, file_get_contents($file->getRealPath()), 'public');
                     return $path;
                 })
                 ->downloadable()
                 ->openable(),
 
-            // Passport attachment (image/pdf) — gambar DIKOMPRES, pdf disimpan apa adanya
-            FileUpload::make('passport_file_path')
-                ->label('Passport Attachment')
-                ->disk('public')
-                ->directory('guests/passport')
-                ->preserveFilenames()
-                ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
-                ->getUploadedFileNameForStorageUsing(
-                    fn(TemporaryUploadedFile $file): string => $file->getClientOriginalName()
-                )
-                ->saveUploadedFileUsing(function (TemporaryUploadedFile $file): string {
-                    if (str_starts_with($file->getMimeType(), 'image/')) {
-                        return self::storeCompressed($file, 'guests/passport');
-                    }
-                    $path = 'guests/passport/' . $file->getClientOriginalName();
-                    Storage::disk('public')->put($path, file_get_contents($file->getRealPath()), 'public');
-                    return $path;
-                })
-                ->downloadable()
-                ->openable(),
+            // Data tempat & tanggal
+            TextInput::make('birth_place'),
+            DatePicker::make('birth_date')->native(false),
 
-            // Photo — gambar saja, DIKOMPRES
-            FileUpload::make('photo_path')
-                ->label('Photo')
-                ->disk('public')
-                ->directory('guests/photos')
-                ->image()
-                ->preserveFilenames()
-                ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
-                ->getUploadedFileNameForStorageUsing(
-                    fn(TemporaryUploadedFile $file): string => $file->getClientOriginalName()
-                )
-                ->saveUploadedFileUsing(
-                    fn(TemporaryUploadedFile $file): string
-                    => self::storeCompressed($file, 'guests/photos')
-                ),
+            TextInput::make('issued_place')->label('Issued At'),
+            DatePicker::make('issued_date')->label('Issued Date')->native(false),
+
+            // Kontak
+            TextInput::make('phone')->tel(),
+            TextInput::make('email')->label('Email address')->email(),
         ]);
     }
 

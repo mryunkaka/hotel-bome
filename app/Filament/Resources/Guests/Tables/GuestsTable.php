@@ -12,6 +12,7 @@ use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\RestoreBulkAction;
 use Filament\Tables\Columns\TextColumn;
+use Illuminate\Support\Facades\Storage;
 use Filament\Notifications\Notification;
 use Filament\Forms\Components\FileUpload;
 use Filament\Tables\Filters\TrashedFilter;
@@ -24,40 +25,98 @@ class GuestsTable
         return $table
             ->columns([
                 TextColumn::make('hotel.name')
-                    ->searchable(),
+                    ->label('Hotel')
+                    ->searchable()
+                    ->sortable(),
+
+                TextColumn::make('salutation')
+                    ->label('Title')
+                    ->formatStateUsing(fn($state) => $state instanceof \BackedEnum ? $state->value : ($state instanceof \UnitEnum ? $state->name : $state))
+                    ->sortable()
+                    ->toggleable(),
+
                 TextColumn::make('name')
-                    ->searchable(),
+                    ->searchable()
+                    ->sortable(),
+
+                TextColumn::make('guest_type')
+                    ->label('Guest Type')
+                    ->sortable()
+                    ->toggleable(),
+
                 TextColumn::make('email')
                     ->label('Email address')
-                    ->searchable(),
+                    ->searchable()
+                    ->sortable(),
+
                 TextColumn::make('phone')
-                    ->searchable(),
+                    ->searchable()
+                    ->sortable(),
+
                 TextColumn::make('address')
-                    ->searchable(),
-                TextColumn::make('nid_no')
-                    ->searchable(),
-                TextColumn::make('nid_file_path')
-                    ->searchable(),
-                TextColumn::make('passport_no')
-                    ->searchable(),
-                TextColumn::make('passport_file_path')
-                    ->searchable(),
-                TextColumn::make('father')
-                    ->searchable(),
-                TextColumn::make('mother')
-                    ->searchable(),
-                TextColumn::make('spouse')
-                    ->searchable(),
-                TextColumn::make('photo_path')
-                    ->searchable(),
+                    ->limit(30)
+                    ->searchable()
+                    ->toggleable(),
+
+                TextColumn::make('city')
+                    ->sortable()
+                    ->toggleable(),
+
+                TextColumn::make('nationality')
+                    ->sortable()
+                    ->toggleable(),
+
+                TextColumn::make('profession')
+                    ->sortable()
+                    ->toggleable(),
+
+                TextColumn::make('id_type')
+                    ->label('ID Type')
+                    ->sortable()
+                    ->toggleable(),
+
+                TextColumn::make('id_card')
+                    ->label('ID / Passport No')
+                    ->searchable()
+                    ->copyable()
+                    ->sortable(),
+
+                TextColumn::make('id_card_file')
+                    ->label('Attachment')
+                    ->url(fn($record) => $record->id_card_file ? Storage::url($record->id_card_file) : null, true)
+                    ->openUrlInNewTab()
+                    ->toggleable(),
+
+                TextColumn::make('birth_place')
+                    ->label('Birth Place')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('birth_date')
+                    ->date()
+                    ->label('Birth Date')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('issued_place')
+                    ->label('Issued At')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('issued_date')
+                    ->date()
+                    ->label('Issued Date')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
+
                 TextColumn::make('updated_at')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
+
                 TextColumn::make('deleted_at')
                     ->dateTime()
                     ->sortable()

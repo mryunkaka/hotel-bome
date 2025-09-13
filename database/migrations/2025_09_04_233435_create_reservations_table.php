@@ -16,6 +16,11 @@ return new class extends Migration
             $table->foreignId('group_id')->nullable()
                 ->constrained('reservation_groups')->nullOnDelete();
 
+            $table->foreignId('guest_id')
+                ->nullable()
+                ->constrained('guests')
+                ->nullOnDelete();
+
             // Identitas reservasi
             $table->string('reservation_no', 30)->nullable()->unique(); // ex: HOTEL-RESV250900001
 

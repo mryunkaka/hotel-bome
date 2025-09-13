@@ -1,0 +1,79 @@
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+
+class RoomSeeder extends Seeder
+{
+    public function run(): void
+    {
+        // Pakai hotel BOME jika ada; jika tidak, ambil hotel pertama atau 1.
+        $hotelId = DB::table('hotels')->where('id', '1')->value('id')
+            ?? DB::table('hotels')->orderBy('id')->value('id')
+            ?? 1;
+
+        // Harga per kategori (Rp)
+        $prices = [
+            'DELUXE TWIN'     => 400_000,
+            'DELUXE PREMIUM'  => 400_000,
+            'SUPERIOR QUEEN'  => 350_000,
+            'SUPERIOR TWIN'   => 350_000,
+            'STANDARD 1'      => 250_000,
+            'STANDARD 2'      => 175_000,
+        ];
+
+        // Daftar kamar (sesuai screenshot)
+        $rooms = [
+            // Lantai 1
+            ['room_no' => '101', 'type' => 'DELUXE TWIN'],
+            ['room_no' => '102', 'type' => 'DELUXE TWIN'],
+            ['room_no' => '103', 'type' => 'DELUXE TWIN'],
+
+            ['room_no' => '108', 'type' => 'SUPERIOR QUEEN'],
+            ['room_no' => '109', 'type' => 'SUPERIOR QUEEN'],
+            ['room_no' => '110', 'type' => 'SUPERIOR QUEEN'],
+
+            // Lantai 2
+            ['room_no' => '201', 'type' => 'SUPERIOR TWIN'],
+            ['room_no' => '202', 'type' => 'STANDARD 1'],
+            ['room_no' => '203', 'type' => 'STANDARD 1'],
+            ['room_no' => '205', 'type' => 'STANDARD 1'],
+            ['room_no' => '206', 'type' => 'DELUXE PREMIUM'],
+            ['room_no' => '207', 'type' => 'STANDARD 1'],
+            ['room_no' => '208', 'type' => 'STANDARD 1'],
+            ['room_no' => '209', 'type' => 'STANDARD 1'],
+            ['room_no' => '210', 'type' => 'STANDARD 1'],
+            ['room_no' => '211', 'type' => 'STANDARD 1'],
+            ['room_no' => '212', 'type' => 'STANDARD 1'],
+            ['room_no' => '213', 'type' => 'STANDARD 1'],
+            ['room_no' => '215', 'type' => 'STANDARD 2'],
+            ['room_no' => '216', 'type' => 'STANDARD 2'],
+        ];
+
+        $payload = [];
+        foreach ($rooms as $r) {
+            $roomNo = (int) $r['room_no'];
+            $type   = $r['type'];
+            $price  = $prices[$type] ?? 0;
+
+            $payload[] = [
+                'hotel_id'  => $hotelId,
+                'type'      => $type,
+                'room_no'   => (string) $roomNo,
+                'floor'     => intdiv($roomNo, 100), // 101 -> 1, 216 -> 2
+                'price'     => $price,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        // Upsert berdasarkan (hotel_id, room_no)
+        DB::table('rooms')->upsert(
+            $payload,
+            ['hotel_id', 'room_no'],
+            ['type', 'floor', 'price', 'updated_at']
+        );
+    }
+}

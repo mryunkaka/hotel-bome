@@ -1,0 +1,170 @@
+<?php
+
+namespace App\Filament\Resources\Reservations\Pages;
+
+use App\Models\Room;
+use Filament\Actions\Action;
+use Illuminate\Support\Carbon;
+use Filament\Actions\DeleteAction;
+use Filament\Actions\RestoreAction;
+use Illuminate\Support\Facades\Auth;
+use Filament\Actions\ForceDeleteAction;
+use Illuminate\Support\Facades\Session;
+use Filament\Resources\Pages\EditRecord;
+use Illuminate\Validation\ValidationException;
+use App\Filament\Resources\Reservations\ReservationResource;
+
+class EditReservation extends EditRecord
+{
+    protected static string $resource = ReservationResource::class;
+
+    // Heading halaman
+    public function getHeading(): string
+    {
+        $no = $this->getRecord()->reservation_no;
+        return $no ? ('Resv. No : ' . $no) : 'Edit reservation';
+    }
+
+    protected function afterSave(): void
+    {
+        $this->purgeGuestsIfRepeaterEmpty();
+    }
+
+    private function purgeGuestsIfRepeaterEmpty(): void
+    {
+        // Ambil state Repeater dari form
+        $items = data_get($this->data, 'reservationGuests', []);
+
+        // Jika null / [] / hanya berisi elemen kosong -> anggap kosong
+        $isEmpty = blank($items) || collect($items)->filter()->isEmpty();
+
+        if ($isEmpty) {
+            // Soft delete SEMUA anak (karena model ReservationGuest pakai SoftDeletes)
+            $this->record->reservationGuests()->delete();
+
+            // (Opsional) kalau mau HAPUS PERMANEN:
+            // $this->record->reservationGuests()->forceDelete();
+        }
+    }
+
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        // Entry by
+        $data['created_by'] = $data['created_by'] ?? Auth::id();
+
+        // Hitung expected_departure dari arrival + nights (UI-only)
+        if (!empty($data['expected_arrival']) && !empty($data['nights'])) {
+            $data['expected_departure'] = Carbon::parse($data['expected_arrival'])
+                ->startOfDay()
+                ->addDays(max(1, (int) $data['nights']))
+                ->setTime(12, 0);
+        }
+
+        // Reserved By: sekarang hanya pakai guest_id / group_id
+        $type = $data['reserved_by_type'] ?? 'GUEST';
+
+        if ($type === 'GUEST') {
+            if (empty($data['guest_id'])) {
+                throw ValidationException::withMessages([
+                    'guest_id' => 'Silakan pilih Guest.',
+                ]);
+            }
+            // pastikan tidak tercampur
+            $data['group_id'] = null;
+        } else { // GROUP
+            if (empty($data['group_id'])) {
+                throw ValidationException::withMessages([
+                    'group_id' => 'Silakan pilih Group.',
+                ]);
+            }
+            $data['guest_id'] = null;
+        }
+
+        // === Sinkron data repeater reservationGuests (tanpa live/hook) ===
+        if (! empty($data['reservationGuests']) && is_array($data['reservationGuests'])) {
+            $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+            foreach ($data['reservationGuests'] as &$row) {
+                // hotel_id default
+                $row['hotel_id'] = $row['hotel_id'] ?? $hid;
+
+                // Pax = male + female + children (min 1)
+                $male = (int)($row['male'] ?? 0);
+                $female = (int)($row['female'] ?? 0);
+                $children = (int)($row['children'] ?? 0);
+                $row['jumlah_orang'] = max(1, $male + $female + $children);
+
+                // Default periode (fallback): now 12:00 dan +1 hari 12:00
+                if (empty($row['expected_checkin'])) {
+                    $row['expected_checkin'] = !empty($data['expected_arrival'])
+                        ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
+                        : now()->setTime(12, 0);
+                }
+                if (empty($row['expected_checkout'])) {
+                    $row['expected_checkout'] = !empty($data['expected_departure'])
+                        ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
+                        : Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
+                }
+
+                // Room rate otomatis dari harga room jika kosong
+                if (empty($row['room_rate']) && !empty($row['room_id'])) {
+                    $price = Room::whereKey($row['room_id'])->value('price');
+                    if ($price !== null) {
+                        $row['room_rate'] = (int) $price;
+                    }
+                }
+            }
+            unset($row);
+        }
+
+        // Buang field non-DB / legacy
+        unset(
+            $data['nights'],
+            $data['reserved_guest_id'],
+            $data['reserved_by'],
+            $data['reserved_number'],
+            $data['reserved_title'],
+        );
+
+        return $data;
+    }
+
+    // Nilai default saat membuka form edit (untuk UI saja)
+    protected function mutateFormDataBeforeFill(array $data): array
+    {
+        // Default nights
+        if (empty($data['nights'])) {
+            if (!empty($data['expected_arrival']) && !empty($data['expected_departure'])) {
+                $data['nights'] = Carbon::parse($data['expected_arrival'])
+                    ->startOfDay()
+                    ->diffInDays(Carbon::parse($data['expected_departure'])->startOfDay()) ?: 1;
+            } else {
+                $data['nights'] = 1;
+            }
+        }
+
+        // Default reserved_by_type berdasar data yang ada
+        if (empty($data['reserved_by_type'])) {
+            $data['reserved_by_type'] = !empty($data['group_id']) ? 'GROUP' : 'GUEST';
+        }
+
+        return $data;
+    }
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('print')
+                ->label('Print')
+                ->icon('heroicon-m-printer')
+                ->url(fn() => route('reservations.print', [
+                    'reservation' => $this->record,   // ← WAJIB pakai key param
+                ]))
+                ->openUrlInNewTab(),
+
+            DeleteAction::make(),
+            ForceDeleteAction::make(),
+            RestoreAction::make(),
+        ];
+    }
+}

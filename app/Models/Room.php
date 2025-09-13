@@ -32,6 +32,11 @@ class Room extends Model
         return $this->belongsTo(Hotel::class);
     }
 
+    public function reservationGuests()
+    {
+        return $this->hasMany(ReservationGuest::class);
+    }
+
     public function bookings(): HasMany
     {
         // Kalau kolom FK berbeda, sesuaikan: hasMany(Booking::class, 'room_id', 'id')

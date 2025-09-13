@@ -48,6 +48,11 @@ class Guest extends Model
         $this->attributes['id_card'] = ($v === '' || $v === '-') ? null : $v;
     }
 
+    public function reservationGuests()
+    {
+        return $this->hasMany(ReservationGuest::class);
+    }
+
     public function hotel(): BelongsTo
     {
         return $this->belongsTo(Hotel::class);

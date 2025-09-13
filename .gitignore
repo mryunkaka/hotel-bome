@@ -39,3 +39,5 @@ Thumbs.db
 # Homestead
 Homestead.json
 Homestead.yaml
+echo "hotelbome.zip" >> .gitignore
+echo "vite.config copy.js" >> .gitignore

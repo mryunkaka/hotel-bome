@@ -15,7 +15,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             InitialSetupSeeder::class,
-            GuestSeeder::class,
+            // GuestSeeder::class,
             RoomSeeder::class,
         ]);
     }

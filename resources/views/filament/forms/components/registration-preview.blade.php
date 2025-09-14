@@ -6,6 +6,9 @@
     $guest   = $rg?->guest;
     $room    = $rg?->room;
 
+    $qty   = (int) ($rg?->extra_bed ?? 0);
+    $total = $qty * 100_000;
+
     // helpers tampilan
     $fmt = fn($dt) => $dt ? \Illuminate\Support\Carbon::parse($dt)->format('d/m/Y H:i') : '-';
     $n   = fn($v) => is_numeric($v) ? number_format($v, 0, ',', '.') : $v;
@@ -106,7 +109,7 @@
                 <div class="sep"></div>
                 <div class="reg-row"><div>Room No.</div><div>{{ $room?->room_no ?? '-' }} {{ $room?->type ? '— '.$room->type : '' }}</div></div>
                 <div class="reg-row"><div>Rate Type</div><div>{{ $res?->method ?? '-' }}</div></div>
-
+                <div class="reg-row"><div>Extra Bed</div><div> {{ $qty > 0 ? ($qty . ' — Rp.' . number_format($total, 0, ',', '.')) : '-' }}</div></div>
                 <div class="reg-row">
                     <div>Pax/Persons</div>
                     <div>

@@ -231,10 +231,10 @@ class ReservationForm
                                         FSelect::make('id_type')
                                             ->label('Identity Type')
                                             ->options([
-                                                'KTP'      => 'KTP',
-                                                'PASSPORT' => 'Passport',
-                                                'SIM'      => 'SIM',
-                                                'OTHER'    => 'Other',
+                                                'ID'             => 'National ID',
+                                                'PASSPORT'       => 'Passport',
+                                                'DRIVER_LICENSE' => 'Driver License',
+                                                'OTHER'          => 'Other',
                                             ])
                                             ->native(false)
                                             ->columnSpan(4),
@@ -549,7 +549,8 @@ class ReservationForm
 
                             TextInput::make('pov')->label('Purpose of Visit')->columnSpan(2),
 
-                            TextInput::make('note')->label('Note')->columnSpan(3),
+                            TextInput::make('note')->label('Note')->columnSpan(2),
+                            TextInput::make('extra_bed')->label('E. Bed')->numeric()->default(0)->minValue(0)->columnSpan(1),
                         ])
                         ->extraItemActions([
                             Action::make('hapus')

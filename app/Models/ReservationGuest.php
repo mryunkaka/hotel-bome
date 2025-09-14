@@ -28,6 +28,7 @@ class ReservationGuest extends Model
         'pov',
         'breakfast',
         'note',
+        'extra_bed'
     ];
 
     protected $casts = [
@@ -47,6 +48,11 @@ class ReservationGuest extends Model
     | Relationships
     |--------------------------------------------------------------------------
     */
+
+    public function tax(): BelongsTo
+    {
+        return $this->belongsTo(TaxSetting::class, 'id_tax');
+    }
 
     public function group(): BelongsTo
     {

@@ -4,6 +4,106 @@
 <head>
   <meta charset="utf-8">
   @php
+  //hitungan room rate dan extra bed 
+  // Harga extra bed per unit
+  $EXTRA_BED_PRICE = 100000;
+
+  /**
+   * (Opsional) peta pajak: [tax_id => percent]
+   * Lebih bagus dikirim dari controller: $taxLookup = TaxSetting::pluck('percent','id')->toArray();
+   * Jika belum ada tapi $rows berisi id_tax, kita coba isi otomatis:
+   */
+  if (!isset($taxLookup)) {
+      $taxLookup = [];
+      if (!empty($rows) && is_iterable($rows)) {
+          $ids = [];
+          foreach ($rows as $rr) {
+              $idTax = is_array($rr) ? ($rr['id_tax'] ?? null) : (is_object($rr) ? ($rr->id_tax ?? null) : null);
+              if ($idTax) $ids[] = (int) $idTax;
+          }
+          $ids = array_values(array_unique(array_filter($ids)));
+          if ($ids) {
+              try {
+                  $taxLookup = \App\Models\TaxSetting::query()
+                      ->whereIn('id', $ids)
+                      ->pluck('percent', 'id')
+                      ->toArray();
+              } catch (\Throwable $e) {
+                  $taxLookup = [];
+              }
+          }
+      }
+  }
+
+  /** helper: ambil nilai dari array/objek */
+  $getVal = function ($src, string $key, $default = null) {
+      if (is_array($src) && array_key_exists($key, $src)) return $src[$key];
+      if (is_object($src) && isset($src->{$key})) return $src->{$key};
+      return $default;
+  };
+
+  /** helper: normalisasi angka (support "1.234,56", "10%", dsb) → float */
+  $toNum = function ($v): float {
+      if ($v === null || $v === '') return 0.0;
+      if (is_numeric($v)) return (float) $v;
+      $s = (string) $v;
+      $s = trim($s);
+      $s = str_replace(['%',' '], '', $s);
+      // Ubah format Indonesia/Eropa "1.234,56" → "1234.56"
+      // Jika ada koma & titik, anggap titik = pemisah ribuan, koma = desimal
+      if (strpos($s, ',') !== false && strpos($s, '.') !== false) {
+          $s = str_replace('.', '', $s);
+          $s = str_replace(',', '.', $s);
+      } else {
+          // Hapus pemisah ribuan umum
+          $s = str_replace([',', ' '], '', $s);
+      }
+      // Sisakan digit, minus, dan titik desimal
+      $s = preg_replace('/[^0-9\.\-]/', '', $s);
+      return is_numeric($s) ? (float) $s : 0.0;
+  };
+
+  /** clamp persen 0–100 */
+  $clampPct = fn (float $p) => max(0.0, min(100.0, $p));
+
+  $calcFinalRate = function ($row) use ($EXTRA_BED_PRICE, $getVal, $toNum, $clampPct, $taxLookup) {
+      // base rate (cari beberapa kemungkinan key)
+      $base = $toNum(
+          $getVal($row, 'rate',
+              $getVal($row, 'unit_price',
+                  $getVal($row, 'room_rate', 0)
+              )
+          )
+      );
+
+      // diskon %
+      $disc = $clampPct($toNum(
+          $getVal($row, 'discount_percent', $getVal($row, 'discount', 0))
+      ));
+
+      // pajak % (prioritas: tax_percent | tax | id_tax -> $taxLookup)
+      $tax = $toNum($getVal($row, 'tax_percent', $getVal($row, 'tax', null)));
+      if ($tax === 0.0) {
+          $idTax = $getVal($row, 'id_tax');
+          if ($idTax !== null && isset($taxLookup[(int) $idTax])) {
+              $tax = $toNum($taxLookup[(int) $idTax]);
+          }
+      }
+      $tax = $clampPct($tax);
+
+      // extra bed qty
+      $extraQty = (int) $toNum($getVal($row, 'extra_bed', 0));
+      $extra    = $extraQty * $EXTRA_BED_PRICE;
+
+      // Hitung: base → diskon → pajak → + extra
+      $afterDisc = max(0.0, $base * (1 - $disc / 100));
+      $afterTax  = $afterDisc * (1 + $tax / 100);
+
+      return $afterTax + $extra;
+  };
+  // akhir hitungan
+
+
     $paper       = strtoupper($paper ?? 'A4');
     $orientation = in_array(strtolower($orientation ?? 'portrait'), ['portrait','landscape'], true) ? strtolower($orientation) : 'portrait';
 
@@ -207,7 +307,7 @@
         <tr>
           <td>{{ $r['room_no'] ?? '-' }}</td>
           <td>{{ $r['category'] ?? '-' }}</td>
-          <td class="right">{{ $fmtMoney($r['rate'] ?? 0) }}</td>
+          <td class="right">{{ $fmtMoney($calcFinalRate($r)) }}</td>
           <td class="center">{{ $r['ps'] ?? '1' }}</td>
           <td>{{ $r['guest_display'] ?? ($billTo['name'] ?? '-') }}</td>
           <td class="center">

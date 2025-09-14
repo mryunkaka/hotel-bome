@@ -53,7 +53,7 @@ class EditReservation extends EditRecord
         $data['created_by'] = $data['created_by'] ?? Auth::id();
 
         // Hitung expected_departure dari arrival + nights (UI-only)
-        if (!empty($data['expected_arrival']) && !empty($data['nights'])) {
+        if (! empty($data['expected_arrival']) && ! empty($data['nights'])) {
             $data['expected_departure'] = Carbon::parse($data['expected_arrival'])
                 ->startOfDay()
                 ->addDays(max(1, (int) $data['nights']))
@@ -80,6 +80,15 @@ class EditReservation extends EditRecord
             $data['guest_id'] = null;
         }
 
+        // ========= Referensi header untuk periode per-guest =========
+        $headerIn  = !empty($data['expected_arrival'])
+            ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
+            : null;
+
+        $headerOut = !empty($data['expected_departure'])
+            ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
+            : ($headerIn ? $headerIn->copy()->addDay()->setTime(12, 0) : null);
+
         // === Sinkron data repeater reservationGuests (tanpa live/hook) ===
         if (! empty($data['reservationGuests']) && is_array($data['reservationGuests'])) {
             $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
@@ -89,22 +98,33 @@ class EditReservation extends EditRecord
                 $row['hotel_id'] = $row['hotel_id'] ?? $hid;
 
                 // Pax = male + female + children (min 1)
-                $male = (int)($row['male'] ?? 0);
-                $female = (int)($row['female'] ?? 0);
+                $male     = (int)($row['male'] ?? 0);
+                $female   = (int)($row['female'] ?? 0);
                 $children = (int)($row['children'] ?? 0);
                 $row['jumlah_orang'] = max(1, $male + $female + $children);
 
-                // Default periode (fallback): now 12:00 dan +1 hari 12:00
-                if (empty($row['expected_checkin'])) {
-                    $row['expected_checkin'] = !empty($data['expected_arrival'])
-                        ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
-                        : now()->setTime(12, 0);
+                // ================== Periode per-guest via MUTATE ==================
+                // Override dari header (sesuai permintaan: masuk mutate saja)
+                if ($headerIn) {
+                    $row['expected_checkin'] = $headerIn->copy();
+                } else {
+                    $row['expected_checkin'] = now()->setTime(12, 0);
                 }
-                if (empty($row['expected_checkout'])) {
-                    $row['expected_checkout'] = !empty($data['expected_departure'])
-                        ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
-                        : Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
+
+                if ($headerOut) {
+                    $row['expected_checkout'] = $headerOut->copy();
+                } else {
+                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
                 }
+
+                // Pastikan checkout > checkin (minimal +1 hari)
+                if (
+                    Carbon::parse($row['expected_checkout'])
+                    ->lessThanOrEqualTo(Carbon::parse($row['expected_checkin']))
+                ) {
+                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
+                }
+                // ===================================================================
 
                 // Room rate otomatis dari harga room jika kosong
                 if (empty($row['room_rate']) && !empty($row['room_id'])) {

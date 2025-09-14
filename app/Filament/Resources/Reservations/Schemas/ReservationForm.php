@@ -26,6 +26,7 @@ use Filament\Forms\Components\FileUpload;
 use Illuminate\Database\Eloquent\Builder;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Forms\Components\Select as FSelect;
 
 class ReservationForm
@@ -138,7 +139,8 @@ class ReservationForm
                         DateTimePicker::make('expected_arrival')
                             ->label('Arrival')
                             ->required()
-                            ->default(fn() => now())
+                            ->default(fn() => now()->setTime(12, 0)) // 12:00 siang
+                            ->seconds(false)
                             ->columnSpan(6),
 
                         TextInput::make('nights')
@@ -171,24 +173,46 @@ class ReservationForm
                             ->label('Guest')
                             ->options(function () {
                                 $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
-                                return Guest::query()
+
+                                // ambil name + id_card untuk format label "NAME (ID)"
+                                $rows = Guest::query()
                                     ->when($hid, fn($q) => $q->where('hotel_id', $hid))
                                     ->orderBy('name')->limit(50)
-                                    ->pluck('name', 'id')->toArray();
+                                    ->get(['id', 'name', 'id_card']);
+
+                                return $rows->mapWithKeys(function ($g) {
+                                    $idCard = trim((string) ($g->id_card ?? ''));
+                                    $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                    return [$g->id => $label];
+                                })->toArray();
                             })
                             ->searchable()
                             ->getSearchResultsUsing(function (string $search) {
                                 $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
-                                return Guest::query()
+
+                                // cari by name / phone / id_card
+                                $rows = Guest::query()
                                     ->when($hid, fn($q) => $q->where('hotel_id', $hid))
                                     ->where(function ($q) use ($search) {
                                         $q->where('name', 'like', "%{$search}%")
-                                            ->orWhere('phone', 'like', "%{$search}%");
+                                            ->orWhere('phone', 'like', "%{$search}%")
+                                            ->orWhere('id_card', 'like', "%{$search}%");
                                     })
                                     ->orderBy('name')->limit(50)
-                                    ->pluck('name', 'id')->toArray();
+                                    ->get(['id', 'name', 'id_card']);
+
+                                return $rows->mapWithKeys(function ($g) {
+                                    $idCard = trim((string) ($g->id_card ?? ''));
+                                    $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                    return [$g->id => $label];
+                                })->toArray();
                             })
-                            ->getOptionLabelUsing(fn($value) => optional(Guest::find($value))->name)
+                            ->getOptionLabelUsing(function ($value) {
+                                $g = Guest::query()->select(['name', 'id_card'])->find($value);
+                                if (! $g) return null;
+                                $idCard = trim((string) ($g->id_card ?? ''));
+                                return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                            })
                             ->createOptionForm([
 
                                 Section::make('Guest Info')->schema([
@@ -321,6 +345,7 @@ class ReservationForm
                             ->required(fn(callable $get) => ($get('reserved_by_type') ?? 'GUEST') === 'GUEST')
                             ->columnSpan(12),
 
+
                         // --- Mode Group: pilih Group (dengan tombol + buat baru)
                         FSelect::make('group_id')
                             ->label('Group')
@@ -341,6 +366,9 @@ class ReservationForm
                             ->preload()
                             ->createOptionForm([
                                 TextInput::make('name')->label('Group Name')->required(),
+                                TextInput::make('address')->label('Address'),
+                                TextInput::make('city')->label('City'),
+                                TextInput::make('fax')->label('Fax'),
                                 TextInput::make('phone')->label('Phone'),
                                 TextInput::make('handphone')->label('Handphone'),
                                 TextInput::make('email')->label('Email')->email(),
@@ -418,19 +446,23 @@ class ReservationForm
                             return $data;
                         })
                         ->schema([
+                            // =========================
+                            // ROOM
+                            // =========================
                             Select::make('room_id')
                                 ->label('Room')
                                 ->native(false)
+                                ->placeholder('Select')
                                 ->searchable()
-                                ->rules(['required', 'distinct']) // room_id
-                                ->live() // supaya options re-render saat sibling berubah
+                                ->rules(['required', 'distinct'])
+                                ->live()
                                 ->reactive()
                                 ->options(function (Get $get) {
                                     $hid     = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
                                     $current = (int) ($get('room_id') ?? 0);
 
                                     // semua room yang sudah dipilih di repeater
-                                    $picked = array_map('intval', array_filter($get('../../reservationGuests.*.room_id') ?? []));
+                                    $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.room_id') ?? []));
                                     // keluarkan nilai baris sendiri agar labelnya tetap ada
                                     $exclude = array_diff($picked, [$current]);
 
@@ -455,23 +487,25 @@ class ReservationForm
                                         ->limit(50)
                                         ->pluck('room_no', 'id');
                                 })
-                                // fallback jika nilai sudah terlanjur ada (edit mode)
+                                // fallback jika nilai sudah ada (edit mode)
                                 ->getOptionLabelUsing(fn($value) => optional(\App\Models\Room::find($value))->room_no)
-                                // opsional: auto isi rate saat pilih room
+                                // auto isi rate saat pilih room
                                 ->afterStateUpdated(function ($state, callable $set) {
                                     if ($state) {
                                         $price = \App\Models\Room::whereKey($state)->value('price');
                                         $set('room_rate', (int) ($price ?? 0));
                                     }
                                 })
-                                ->rules(['required', 'distinct'])
                                 ->columnSpan(2),
 
-                            // GUEST (tanpa relationship)
+                            // =========================
+                            // GUEST
+                            // =========================
                             Select::make('guest_id')
                                 ->label('Guest')
+                                ->placeholder('Select')
                                 ->native(false)
-                                ->rules(['nullable', 'distinct']) // guest_id
+                                ->rules(['required', 'distinct']) // wajib sesuai migration
                                 ->searchable()
                                 ->live()
                                 ->reactive()
@@ -482,12 +516,18 @@ class ReservationForm
                                     $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.guest_id') ?? []));
                                     $exclude = array_diff($picked, [$current]);
 
-                                    return \App\Models\Guest::query()
-                                        ->where('hotel_id', $hid) // kamu memang pakai hotel_id di guests
+                                    $rows = \App\Models\Guest::query()
+                                        ->where('hotel_id', $hid)
                                         ->when(!empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
                                         ->orderBy('name')
                                         ->limit(200)
-                                        ->pluck('name', 'id');
+                                        ->get(['id', 'name', 'id_card']);
+
+                                    return $rows->mapWithKeys(function ($g) {
+                                        $idCard = trim((string) ($g->id_card ?? ''));
+                                        $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                        return [$g->id => $label];
+                                    })->toArray();
                                 })
                                 ->getSearchResultsUsing(function (string $search, Get $get) {
                                     $hid     = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
@@ -496,61 +536,160 @@ class ReservationForm
                                     $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.guest_id') ?? []));
                                     $exclude = array_diff($picked, [$current]);
 
-                                    return \App\Models\Guest::query()
+                                    $s = trim(preg_replace('/\s+/', ' ', $search));
+
+                                    $rows = \App\Models\Guest::query()
                                         ->where('hotel_id', $hid)
-                                        ->where(function ($q) use ($search) {
-                                            $q->where('name', 'like', "%{$search}%")
-                                                ->orWhere('phone', 'like', "%{$search}%");
-                                        })
                                         ->when(!empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
+                                        ->where(function ($q) use ($s) {
+                                            $q->where('name', 'like', "%{$s}%")
+                                                ->orWhere('phone', 'like', "%{$s}%")
+                                                ->orWhere('id_card', 'like', "%{$s}%");
+                                        })
                                         ->orderBy('name')
                                         ->limit(50)
-                                        ->pluck('name', 'id');
-                                })
-                                ->getOptionLabelUsing(fn($value) => optional(\App\Models\Guest::find($value))->name)
-                                ->rules(['nullable', 'distinct'])
-                                ->columnSpan(2),
+                                        ->get(['id', 'name', 'id_card']);
 
+                                    return $rows->mapWithKeys(function ($g) {
+                                        $idCard = trim((string) ($g->id_card ?? ''));
+                                        $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                        return [$g->id => $label];
+                                    })->toArray();
+                                })
+                                ->getOptionLabelUsing(function ($value) {
+                                    $g = \App\Models\Guest::query()->select(['name', 'id_card'])->find($value);
+                                    if (! $g) return null;
+                                    $idCard = trim((string) ($g->id_card ?? ''));
+                                    return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                })
+                                ->columnSpan(4),
+
+                            // =========================
+                            // TARIF & DISKON & PAJAK
+                            // =========================
                             TextInput::make('room_rate')
                                 ->label('Rate')
                                 ->numeric()
                                 ->mask(RawJs::make('$money($input)'))
                                 ->stripCharacters(',')
                                 ->placeholder('Auto from room')
+                                ->minValue(0)
                                 ->columnSpan(2),
 
-                            Hidden::make('jumlah_orang'),
-
-                            DateTimePicker::make('expected_checkin')
-                                ->label('Check-in')
-                                ->default(fn() => now()->setTime(12, 0))
+                            TextInput::make('discount_percent')
+                                ->label('Discount (%)')
+                                ->numeric()
+                                ->inputMode('decimal')
+                                ->step('0.01')
+                                ->minValue(0)
+                                ->maxValue(100)
+                                ->placeholder('0.00')
+                                ->suffix('%')
+                                ->default(0)
                                 ->columnSpan(2),
 
-                            DateTimePicker::make('expected_checkout')
-                                ->label('Check-out')
-                                ->default(fn() => now()->addDay()->setTime(12, 0))
+                            Select::make('id_tax')
+                                ->label('Tax')
+                                ->placeholder('Select')
+                                ->native(false)
+                                ->searchable()
+                                ->preload()
+                                ->nullable()
+                                ->options(function () {
+                                    $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                    return \App\Models\TaxSetting::query()
+                                        ->where('hotel_id', $hid)
+                                        ->orderBy('is_active', 'desc')
+                                        ->orderBy('name')
+                                        ->limit(200)
+                                        ->pluck('name', 'id');
+                                })
+                                ->getSearchResultsUsing(function (string $search) {
+                                    $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                    return \App\Models\TaxSetting::query()
+                                        ->where('hotel_id', $hid)
+                                        ->where('name', 'like', "%{$search}%")
+                                        ->orderBy('is_active', 'desc')
+                                        ->orderBy('name')
+                                        ->limit(50)
+                                        ->pluck('name', 'id');
+                                })
                                 ->columnSpan(2),
 
+                            // =========================
+                            // JADWAL
+                            // =========================
+                            // DateTimePicker::make('expected_checkin')
+                            //     ->label('E. Check-in')
+                            //     ->default(fn() => now()->setTime(12, 0))
+                            //     ->columnSpan(2),
+
+                            // DateTimePicker::make('expected_checkout')
+                            //     ->label('E. Check-out')
+                            //     ->default(fn() => now()->addDay()->setTime(12, 0))
+                            //     ->columnSpan(2),
+
+                            // =========================
+                            // KOMPOSISI PAX & LAIN-LAIN
+                            // =========================
                             Select::make('breakfast')
                                 ->label('Breakfast')
                                 ->options(['Yes' => 'Yes', 'No' => 'No'])
                                 ->default('No')
                                 ->columnSpan(2),
-                            TextInput::make('person')->label('Person Charge')->columnSpan(2),
-                            TextInput::make('male')->label('Male')->numeric()->default(1)->minValue(0)->columnSpan(1),
-                            TextInput::make('female')->label('Female')->numeric()->default(0)->minValue(0)->columnSpan(1),
-                            TextInput::make('children')->label('Children')->numeric()->default(0)->minValue(0)->columnSpan(1),
-
-                            Select::make('charge_to')
-                                ->label('Charge To')
-                                ->options(['GUEST' => 'GUEST', 'COMPANY' => 'COMPANY', 'AGENCY' => 'AGENCY', 'OTHER' => 'OTHER'])
-                                ->default('GUEST')
+                            TextInput::make('pov')
+                                ->label('Purpose of Visit')
+                                ->maxLength(150)
                                 ->columnSpan(2),
 
-                            TextInput::make('pov')->label('Purpose of Visit')->columnSpan(2),
+                            TextInput::make('male')
+                                ->label('Male')
+                                ->numeric()
+                                ->default(1)
+                                ->minValue(0)
+                                ->reactive()
+                                ->afterStateUpdated(function (Get $get, Set $set) {
+                                    $set('jumlah_orang', max(1, (int)($get('male') ?? 0) + (int)($get('female') ?? 0) + (int)($get('children') ?? 0)));
+                                })
+                                ->columnSpan(1),
 
-                            TextInput::make('note')->label('Note')->columnSpan(2),
-                            TextInput::make('extra_bed')->label('E. Bed')->numeric()->default(0)->minValue(0)->columnSpan(1),
+                            TextInput::make('female')
+                                ->label('Female')
+                                ->numeric()
+                                ->default(0)
+                                ->minValue(0)
+                                ->reactive()
+                                ->afterStateUpdated(function (Get $get, Set $set) {
+                                    $set('jumlah_orang', max(1, (int)($get('male') ?? 0) + (int)($get('female') ?? 0) + (int)($get('children') ?? 0)));
+                                })
+                                ->columnSpan(1),
+
+                            TextInput::make('children')
+                                ->label('Children')
+                                ->numeric()
+                                ->default(0)
+                                ->minValue(0)
+                                ->reactive()
+                                ->afterStateUpdated(function (Get $get, Set $set) {
+                                    $set('jumlah_orang', max(1, (int)($get('male') ?? 0) + (int)($get('female') ?? 0) + (int)($get('children') ?? 0)));
+                                })
+                                ->columnSpan(1),
+
+                            Hidden::make('jumlah_orang'),
+
+                            TextInput::make('extra_bed')
+                                ->label('E. Bed')
+                                ->numeric()
+                                ->default(0)
+                                ->minValue(0)
+                                ->columnSpan(1),
+
+                            TextInput::make('note')
+                                ->label('Note')
+                                ->maxLength(150)
+                                ->columnSpan(2),
+
+                            TextInput::make('person')->label('Person Charge')->columnSpan(2),
                         ])
                         ->extraItemActions([
                             Action::make('hapus')

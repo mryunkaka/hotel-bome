@@ -43,7 +43,7 @@ class ListReservations extends ListRecords
                             'reserved_title'   => 'MR',         // MR/MRS/MS
                             'reserved_by'      => $user->name ?? 'Guest',
                             'entry_date'      => Carbon::now(), // default sekarang
-                            'expected_arrival' => Carbon::now()->addHour(), // default 1 jam lagi
+                            'expected_arrival' => now()->setTime(12, 0),                            // default 1 jam lagi
                             // ====== audit fields jika ada di tabel ======
                             'created_by'       => $user->id ?? null,
                             'updated_by'       => $user->id ?? null,

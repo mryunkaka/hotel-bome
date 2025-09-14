@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   @php
-  //hitungan room rate dan extra bed 
+  // ================== HITUNGAN RATE (diskon, pajak, extra bed) ==================
   // Harga extra bed per unit
   $EXTRA_BED_PRICE = 100000;
 
@@ -49,16 +49,12 @@
       $s = (string) $v;
       $s = trim($s);
       $s = str_replace(['%',' '], '', $s);
-      // Ubah format Indonesia/Eropa "1.234,56" → "1234.56"
-      // Jika ada koma & titik, anggap titik = pemisah ribuan, koma = desimal
       if (strpos($s, ',') !== false && strpos($s, '.') !== false) {
           $s = str_replace('.', '', $s);
           $s = str_replace(',', '.', $s);
       } else {
-          // Hapus pemisah ribuan umum
           $s = str_replace([',', ' '], '', $s);
       }
-      // Sisakan digit, minus, dan titik desimal
       $s = preg_replace('/[^0-9\.\-]/', '', $s);
       return is_numeric($s) ? (float) $s : 0.0;
   };
@@ -66,6 +62,7 @@
   /** clamp persen 0–100 */
   $clampPct = fn (float $p) => max(0.0, min(100.0, $p));
 
+  // Rumus final rate
   $calcFinalRate = function ($row) use ($EXTRA_BED_PRICE, $getVal, $toNum, $clampPct, $taxLookup) {
       // base rate (cari beberapa kemungkinan key)
       $base = $toNum(
@@ -101,7 +98,93 @@
 
       return $afterTax + $extra;
   };
-  // akhir hitungan
+
+  /**
+   * ENRICH ROW dari ReservationGuest bila field diskon/pajak/extra belum ada.
+   * Kunci pencarian: room_no + tanggal exp_arr (dd/mm/yyyy atau date lain).
+   * Tidak menghapus field yang sudah ada — hanya melengkapi yang kosong.
+   */
+  use \Carbon\Carbon;
+  $activeHotelId = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? ($hotel->id ?? null);
+
+  // cache room_no -> room_id untuk hotel aktif
+  $roomIdByNo = [];
+  try {
+      $roomIdByNo = $activeHotelId
+        ? \App\Models\Room::where('hotel_id', $activeHotelId)->pluck('id', 'room_no')->toArray()
+        : [];
+  } catch (\Throwable $e) {
+      $roomIdByNo = [];
+  }
+
+  $enrichRow = function ($row) use (&$taxLookup, $getVal, $toNum, $roomIdByNo, $activeHotelId) {
+      $r = is_array($row) ? $row : (array) $row;
+
+      $needDisc  = !isset($r['discount_percent']);
+      $needTaxId = !isset($r['id_tax']) && !isset($r['tax_percent']) && !isset($r['tax']);
+      $needExtra = !isset($r['extra_bed']);
+      $needBase  = !isset($r['rate']) && !isset($r['unit_price']) && !isset($r['room_rate']);
+
+      if (!($needDisc || $needTaxId || $needExtra || $needBase)) {
+          return $r; // sudah lengkap
+      }
+
+      // derive kunci untuk cari ReservationGuest
+      $roomNo = trim((string) ($r['room_no'] ?? ''));
+      $roomId = $roomIdByNo[$roomNo] ?? null;
+
+      $arrRaw = $getVal($r, 'exp_arr');
+      $arrDate = null;
+      if ($arrRaw) {
+          try {
+              $arrDate = Carbon::parse($arrRaw)->toDateString();
+          } catch (\Throwable $e) {
+              // jika format "dd/mm/yyyy", parse manual
+              if (preg_match('~^(\d{2})/(\d{2})/(\d{4})~', (string)$arrRaw, $m)) {
+                  $arrDate = "{$m[3]}-{$m[2]}-{$m[1]}";
+              }
+          }
+      }
+
+      try {
+          $q = \App\Models\ReservationGuest::query()
+              ->with('tax')
+              ->when($activeHotelId, fn($qq) => $qq->where('hotel_id', $activeHotelId))
+              ->when($roomId,       fn($qq) => $qq->where('room_id', $roomId))
+              ->when($arrDate,      fn($qq) => $qq->whereDate('expected_checkin', $arrDate))
+              ->latest('id');
+
+          $rg = $q->first();
+
+          if ($rg) {
+              if ($needBase && $rg->room_rate) {
+                  $r['room_rate'] = (float) $rg->room_rate;
+              }
+              if ($needDisc && $rg->discount_percent !== null) {
+                  $r['discount_percent'] = (float) $rg->discount_percent;
+              }
+              if ($needExtra && $rg->extra_bed !== null) {
+                  $r['extra_bed'] = (int) $rg->extra_bed;
+              }
+              if ($needTaxId) {
+                  if ($rg->id_tax) {
+                      $r['id_tax'] = (int) $rg->id_tax;
+                      // pastikan taxLookup punya persen-nya
+                      if ($rg->relationLoaded('tax') && $rg->tax && !isset($taxLookup[$rg->id_tax])) {
+                          $taxLookup[$rg->id_tax] = (float) $rg->tax->percent;
+                      }
+                  } elseif ($rg->relationLoaded('tax') && $rg->tax) {
+                      $r['tax_percent'] = (float) $rg->tax->percent;
+                  }
+              }
+          }
+      } catch (\Throwable $e) {
+          // lewati jika gagal query
+      }
+
+      return $r;
+  };
+  // ================== /END HITUNGAN ==================
 
 
     $paper       = strtoupper($paper ?? 'A4');
@@ -137,8 +220,7 @@
                 $pos = stripos($desc, $needle);
                 if ($pos !== false) {
                     $seg = trim(substr($desc, $pos + strlen($needle)));
-                    // potong di pemisah " · " jika ada
-                    $seg = explode('·', $seg)[0] ?? $seg;
+                    $seg = explode('·', $seg)[0] ?? $seg; // potong di pemisah " · " jika ada
                     $seg = trim($seg);
                     if     ($key === 'category') $category = $seg;
                     elseif ($key === 'guest')    $guestNm  = $seg;
@@ -148,15 +230,27 @@
             }
 
             $rows[] = [
-                'room_no'   => $roomNo ?: '-',
-                'category'  => $category ?: '-',
-                'rate'      => (float)($it['unit_price'] ?? 0),
-                'ps'        => $ps ?? null, // opsional: bisa diisi dari server kalau ada
-                'guest'     => $guestNm ?: '-',
-                'exp_arr'   => $expArr ?: '-',
-                'exp_dept'  => $expDept ?: '-',
+              'room_no'          => $roomNo ?: '-',
+              'category'         => $category ?: '-',
+              'rate'             => (float)($it['unit_price'] ?? 0),
+              'discount_percent' => (float)($it['discount_percent'] ?? 0), // jika ada di $items
+              'tax_percent'      => isset($it['tax_percent']) ? (float)$it['tax_percent'] : 0,
+              'id_tax'           => $it['id_tax'] ?? null,
+              'extra_bed'        => (int)($it['extra_bed'] ?? 0),
+              'ps'               => $ps ?? null,
+              'guest'            => $guestNm ?: '-',
+              'exp_arr'          => $expArr ?: '-',
+              'exp_dept'         => $expDept ?: '-',
             ];
         }
+    }
+
+    // >>> ENRICH semua row dari ReservationGuest bila field-field penting belum ada
+    if (!empty($rows)) {
+        foreach ($rows as &$__r) {
+            $__r = $enrichRow($__r);
+        }
+        unset($__r);
     }
 
     // Deposit: pakai $deposit jika ada, kalau tidak pakai $paid_total
@@ -182,8 +276,6 @@
   <style>
     @page { size: {{ $paper }} {{ $orientation }}; margin: 12mm; }
     body { margin:0; padding:0; font-family: DejaVu Sans, Arial, sans-serif; font-size:10px; color:#111827; line-height:1.35; }
-
-    /* Header: logo/name left, title center, hotel info right */
     .hdr-table { width:100%; border-collapse:collapse; margin-bottom:10px; }
     .hdr-td { vertical-align:top; }
     .hdr-left  { width:35%; }
@@ -193,36 +285,25 @@
     .logo { display:inline-block; vertical-align:middle; margin-right:6px; }
     .logo img { width:80px; object-fit:contain; }
     .hotel-meta { color:#111827; font-size:9px; line-height:1.35; }
-
     .title { font-size:16px; font-weight:700; text-decoration: underline; }
     .resv-no { margin-top:4px; font-weight:600; letter-spacing:0.2px; }
-
-    /* Key-Value grid under header */
     .kv-table { width:100%; border-collapse:collapse; margin:10px 0 8px; }
     .kv-td { padding:2px 0; }
     .k { color:#374151; width:110px; display:inline-block; }
     .v { color:#111827; font-weight:600; }
-
-    /* Divider line */
     .line { border-top:1.5px solid #1F2937; margin:8px 0; }
-
-    /* Items table */
     table.items { width:100%; border-collapse:collapse; font-size:10px; }
     .items thead th { border-top:1.5px solid #1F2937; border-bottom:1px solid #1F2937; padding:6px; text-align:left; }
     .items td { border-bottom:1px solid #D1D5DB; padding:6px; }
     .center { text-align:center; }
     .right  { text-align:right; }
     .narrow { width:48px; white-space:nowrap; }
-
-    /* Additional info */
     .add-info-title { margin:10px 0 6px; font-weight:700; text-decoration:underline; }
     .two-col { width:100%; border-collapse:collapse; }
     .two-col td { vertical-align:top; padding:2px 0; }
     .two-col .left  { width:50%; padding-right:12px; }
     .two-col .right { width:50%; padding-left:12px; }
     .kv-narrow .k { width:95px; }
-
-    /* Footer */
     .footer { margin-top:16px; }
     .foot-table { width:100%; border-collapse:collapse; }
     .foot-left  { text-align:left;  }
@@ -230,15 +311,11 @@
     .foot-right { text-align:right; }
     .sig-block { margin-top:26px; display:inline-block; min-width:160px; text-align:center; }
     .sig-line { margin-top:38px; border-top:1px solid #9CA3AF; }
-
-    /* Key–Value helper (3 kolom: key | : | value) */
     .kv2{width:100%;border-collapse:collapse}
     .kv2 td{padding:2px 0;vertical-align:top;font-size:10px}
     .kv2 .key{width:120px;white-space:nowrap}
     .kv2 .colon{width:10px;text-align:center}
     .kv2 .val{}
-
-    /* Right-side block: dorong ke kanan tapi tetap pakai kv2 di dalamnya */
     .kv-right{max-width:340px;margin-left:auto}
   </style>
 </head>
@@ -362,7 +439,6 @@
         </td>
     </tr>
     </table>
-
 
   {{-- ===== FOOTER / SIGNATURE ===== --}}
     <div class="line"></div>

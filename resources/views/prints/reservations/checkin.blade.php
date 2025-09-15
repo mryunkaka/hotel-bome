@@ -13,13 +13,12 @@
             : 'portrait';
 
         $fmtMoney = fn($v) => 'Rp ' . number_format((float) $v, 0, ',', '.');
-        // format ringkas supaya tidak terpotong
         $fmtDateShort = fn($v) => $v ? Carbon::parse($v)->format('d/m H:i') : '-';
         $fmtDateFull = fn($v) => $v ? Carbon::parse($v)->format('d/m/Y H:i') : '-';
 
         $hotelRight = array_filter([$hotel?->name, $hotel?->address, $hotel?->city, $hotel?->phone, $hotel?->email]);
 
-        // ====== PERHITUNGAN RATE (PAKAI HELPER) ======
+        // ====== RATE ======
         $baseRate = (float) ($row['rate'] ?? 0);
         $discPct = (float) ($row['discount_percent'] ?? 0);
         $taxPct = (float) ($row['tax_percent'] ?? 0);
@@ -27,24 +26,21 @@
         $extraBedRp = (float) ($row['extra_bed_total'] ?? 0);
         $lateRp = (float) ($row['late_arrival_penalty'] ?? 0);
 
-        // ------ Ambil kandidat tanggal untuk hitung nights ------
+        // Tanggal untuk hitung nights
         $inForNights = $row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null));
         $outForNights = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null));
 
-        // Nights dari data bila disuplai (fallback = 1)
+        // Nights dari data (fallback = 1)
         $nights = (int) max(1, (int) ($row['nights'] ?? 1));
 
-        // Jika punya tanggal in & out yang valid, override nights dengan selisih hari kalender
+        // Override dari selisih hari kalender bila in/out valid
         if ($inForNights && $outForNights) {
             try {
-                // Gunakan startOfDay agar stabil (kamu pakai jam 12:00; selisih hari tetap benar)
                 $nightsDiff = Carbon::parse($inForNights)
                     ->startOfDay()
                     ->diffInDays(Carbon::parse($outForNights)->startOfDay());
-                // Minimal 1 malam
                 $nights = max(1, (int) $nightsDiff);
             } catch (\Throwable $e) {
-                // biarkan nights hasil sebelumnya
             }
         }
 
@@ -65,14 +61,12 @@
             ],
         );
 
-        // Amount per baris = final rate per night × nights (sesuai permintaan)
+        // Amount = rate per night × nights
         $amount = $finalRatePerNight * $nights;
-
-        // Karena template ini 1 baris item, total sama dengan amount; tetap siapkan variabel agar mudah multi-baris
         $totalNights = $nights;
         $subtotal = $amount;
         $tax_total = 0;
-        $total = $subtotal; // jika nanti ada biaya lain, tinggal tambahkan
+        $total = $subtotal;
 
         $breakdown = [
             'basic_rate' => $baseRate,
@@ -90,7 +84,7 @@
     <style>
         @page {
             size: {{ $paper }} {{ $orientation }};
-            margin: 12mm;
+            margin: 10mm;
         }
 
         body {
@@ -99,17 +93,18 @@
             font-family: DejaVu Sans, Arial, sans-serif;
             font-size: 10px;
             color: #111827;
-            line-height: 1.35;
+            line-height: 1.3;
         }
 
         .hdr-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
         .hdr-td {
             vertical-align: top;
+            padding: 0;
         }
 
         .hdr-left {
@@ -130,36 +125,44 @@
             font-size: 16px;
             font-weight: 700;
             text-decoration: underline;
+            margin-bottom: 2px;
         }
 
         .resv-no {
-            margin-top: 4px;
             font-weight: 600;
-            letter-spacing: 0.2px;
+            font-size: 10px;
         }
 
         .logo {
             display: inline-block;
             vertical-align: middle;
-            margin-right: 6px;
         }
 
         .logo img {
-            width: 80px;
+            height: 50px;
             object-fit: contain;
         }
 
         .hotel-meta {
             color: #111827;
             font-size: 9px;
-            line-height: 1.35;
+            line-height: 1.3;
         }
 
         .kv {
             width: 100%;
             border-collapse: collapse;
-            margin: 8px 0;
+            margin: 6px 0;
             table-layout: fixed;
+            font-size: 10px;
+        }
+
+        .kv col.kcol {
+            width: 90px;
+        }
+
+        .kv col.vcol {
+            width: 180px;
         }
 
         .kv td {
@@ -167,21 +170,26 @@
             vertical-align: top;
         }
 
-        .k {
-            width: 130px;
+        .kv .k {
             color: #374151;
-            white-space: nowrap;
+            position: relative;
         }
 
-        .v {
+        .kv .k::after {
+            content: ':';
+            margin-left: 2px;
+        }
+
+        .kv .v {
             color: #111827;
             font-weight: 600;
-            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .line {
-            border-top: 1.5px solid #1F2937;
-            margin: 10px 0;
+            border-top: 1px solid #1F2937;
+            margin: 8px 0;
         }
 
         table.items {
@@ -193,24 +201,24 @@
         }
 
         .items thead th {
-            border-top: 1.5px solid #1F2937;
+            border-top: 1px solid #1F2937;
             border-bottom: 1px solid #1F2937;
-            padding: 6px;
+            padding: 5px 4px;
             text-align: left;
-            white-space: nowrap;
+            font-weight: 600;
         }
 
         .items td {
             border-bottom: 1px solid #D1D5DB;
-            padding: 6px;
-            white-space: nowrap;
+            padding: 5px 4px;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
         .items tfoot td {
-            border-top: 1.5px solid #1F2937;
+            border-top: 1px solid #1F2937;
             font-weight: 700;
+            padding: 5px 4px;
         }
 
         .center {
@@ -226,7 +234,7 @@
         }
 
         .col-room {
-            width: 44px;
+            width: 40px;
         }
 
         .col-cat {
@@ -234,93 +242,109 @@
         }
 
         .col-pax {
-            width: 36px;
-            text-align: center;
+            width: 35px;
         }
 
         .col-rate {
-            width: 88px;
-            text-align: right;
+            width: 75px;
         }
 
         .col-night {
             width: 40px;
-            text-align: center;
         }
 
         .col-in {
-            width: 96px;
-            text-align: center;
+            width: 80px;
         }
 
         .col-out {
-            width: 108px;
-            text-align: center;
+            width: 80px;
         }
 
         .col-amount {
-            width: 100px;
-            text-align: right;
+            width: 85px;
         }
 
         .totals-box-wrap {
             width: 100%;
-            margin-top: 12px;
+            margin-top: 8px;
         }
 
         .totals-box {
             margin-left: auto;
-            width: 360px;
+            width: 320px;
             border-collapse: collapse;
             table-layout: fixed;
             font-size: 10px;
         }
 
         .totals-box td {
-            padding: 6px 6px;
-            white-space: nowrap;
+            padding: 4px 5px;
         }
 
         .tb-k {
-            width: 200px;
+            width: 170px;
             color: #374151;
         }
 
         .tb-v {
-            width: 160px;
+            width: 150px;
             text-align: right;
             font-weight: 600;
         }
 
         .tb-line th {
-            border-top: 1.5px solid #1F2937;
-            padding-top: 8px;
+            border-top: 1px solid #1F2937;
+            padding-top: 5px;
         }
 
-        .tb-strong .tb-k,
-        .tb-strong .tb-v {
+        .tb-strong {
             font-weight: 700;
         }
 
         .footer {
-            margin-top: 14px;
+            margin-top: 12px;
         }
 
         .foot-table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 9px;
+        }
+
+        .foot-left,
+        .foot-mid,
+        .foot-right {
+            padding: 3px 0;
+            vertical-align: top;
         }
 
         .foot-left {
             text-align: left;
+            width: 25%;
         }
 
         .foot-mid {
             text-align: center;
+            width: 50%;
         }
 
         .foot-right {
             text-align: right;
+            width: 25%;
+        }
+
+        .signature-box {
+            display: inline-block;
+            margin-top: 20px;
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .signature-line {
+            border-top: 1px solid #9CA3AF;
+            margin-top: 25px;
+            padding-top: 4px;
         }
     </style>
 </head>
@@ -337,7 +361,7 @@
             </td>
             <td class="hdr-td hdr-mid">
                 <div class="title">{{ $title ?? 'GUEST CHECK-IN' }}</div>
-                <div class="resv-no">RESV NO: {{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</div>
+                <div class="resv-no">{{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</div>
             </td>
             <td class="hdr-td hdr-right">
                 <div class="hotel-meta">
@@ -356,10 +380,16 @@
 
     {{-- ===== INFO ATAS ===== --}}
     <table class="kv">
+        <colgroup>
+            <col class="kcol">
+            <col class="vcol">
+            <col class="kcol">
+            <col class="vcol">
+        </colgroup>
         <tr>
             <td class="k">Status</td>
             <td class="v">{{ strtoupper($status ?? 'CONFIRM') }}</td>
-            <td class="k">Method</td>
+            <td class="k">Payment Method</td>
             <td class="v">{{ ucfirst($payment['method'] ?? 'personal') }}</td>
         </tr>
         <tr>
@@ -369,7 +399,7 @@
             <td class="v">{{ $fmtDateFull($issuedAt ?? ($generatedAt ?? now())) }}</td>
         </tr>
         <tr>
-            <td class="k">Guest</td>
+            <td class="k">Guest Name</td>
             <td class="v">{{ $row['guest_display'] ?? '-' }}</td>
             <td class="k">Clerk</td>
             <td class="v">{{ $clerkName ?? '-' }}</td>
@@ -378,18 +408,18 @@
 
     <div class="line"></div>
 
-    {{-- ===== ITEM (baris RG) ===== --}}
+    {{-- ===== ITEM TABLE ===== --}}
     <table class="items">
         <thead>
             <tr>
-                <th class="col-room">ROOM</th>
-                <th class="col-cat">CATEGORY</th>
-                <th class="col-pax center">PAX</th>
-                <th class="col-rate right">RATE</th>
-                <th class="col-night center">NIGHTS</th>
-                <th class="col-in center">CHECK-IN</th>
-                <th class="col-out center">CHECK-OUT</th>
-                <th class="col-amount right">AMOUNT</th>
+                <th class="col-room">Room</th>
+                <th class="col-cat">Category</th>
+                <th class="col-pax center">Pax</th>
+                <th class="col-rate right">Rate</th>
+                <th class="col-night center">Nights</th>
+                <th class="col-in center">Check-in</th>
+                <th class="col-out center">Check-out</th>
+                <th class="col-amount right">Amount</th>
             </tr>
         </thead>
         <tbody>
@@ -419,7 +449,7 @@
         </tfoot>
     </table>
 
-    {{-- ===== TOTALS BOX (gabung breakdown + totals) ===== --}}
+    {{-- ===== TOTALS BOX ===== --}}
     <div class="totals-box-wrap">
         <table class="totals-box">
             <tr>
@@ -435,7 +465,7 @@
                 <td class="tb-v">{{ number_format((float) $breakdown['room_tax_percent'], 2, ',', '.') }}%</td>
             </tr>
             <tr>
-                <td class="tb-k">Service (Rp)</td>
+                <td class="tb-k">Service Charge</td>
                 <td class="tb-v">{{ $fmtMoney($breakdown['service_rp']) }}</td>
             </tr>
             <tr>
@@ -453,8 +483,7 @@
 
             <tr>
                 <td class="tb-k">Rate × Nights</td>
-                <td class="tb-v">{{ $fmtMoney($finalRatePerNight) }} × {{ $totalNights }} =
-                    {{ $fmtMoney($total) }}</td>
+                <td class="tb-v">{{ $fmtMoney($finalRatePerNight) }} × {{ $totalNights }}</td>
             </tr>
 
             <tr class="tb-line">
@@ -462,7 +491,7 @@
             </tr>
 
             <tr class="tb-strong">
-                <td class="tb-k">Grand Total</td>
+                <td class="tb-k">GRAND TOTAL</td>
                 <td class="tb-v">{{ $fmtMoney($total) }}</td>
             </tr>
         </table>
@@ -470,23 +499,22 @@
 
     <div class="line"></div>
 
-    {{-- ===== FOOTER / TTD ===== --}}
+    {{-- ===== FOOTER ===== --}}
     <div class="footer">
         <table class="foot-table">
             <tr>
-                <td class="foot-left">Page : 1</td>
+                <td class="foot-left">Page: 1</td>
                 <td class="foot-mid">
-                    {{ $hotel?->city ? $hotel->city . ' , ' : '' }}
-                    {{ $fmtDateFull($generatedAt ?? now()) }} - Reception/Cashier
+                    {{ $hotel?->city ? $hotel->city . ', ' : '' }}{{ $fmtDateFull($generatedAt ?? now()) }}
                 </td>
                 <td class="foot-right">&nbsp;</td>
             </tr>
             <tr>
                 <td class="foot-left"></td>
                 <td class="foot-mid">
-                    <div style="display:inline-block; min-width:160px; text-align:center; margin-top:26px;">
-                        <div style="margin-top:38px; border-top:1px solid #9CA3AF;">&nbsp;</div>
-                        {{ $clerkName ?? ($reserved_by ?? ' ') }}
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        {{ $clerkName ?? ($reserved_by ?? 'Reception/Cashier') }}
                     </div>
                 </td>
                 <td class="foot-right"></td>

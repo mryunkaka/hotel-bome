@@ -13,9 +13,6 @@ return new class extends Migration {
             // Scope per hotel
             $table->foreignId('hotel_id')->constrained()->cascadeOnDelete();
 
-            // Jika Anda sudah punya tabel room_types, aktifkan baris ini:
-            // $table->foreignId('room_type_id')->constrained('room_types')->cascadeOnDelete();
-            // Jika belum, gunakan kolom string 'type' (aktifkan baris ini & hapus yang di atas):
             $table->string('type', 100)->nullable();
 
             $table->string('room_no', 50);     // RoomNo

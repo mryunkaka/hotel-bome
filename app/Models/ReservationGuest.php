@@ -25,6 +25,7 @@ class ReservationGuest extends Model
         'children',
         'charge_to',
         'room_rate',
+        'service',
         'expected_checkin',
         'expected_checkout',
         'actual_checkin',

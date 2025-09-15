@@ -47,6 +47,7 @@ return new class extends Migration
              */
             $table->string('charge_to', 30)->nullable();
             $table->unsignedBigInteger('room_rate')->default(0);
+            $table->unsignedBigInteger('service')->nullable(); // biaya tambahan/service per kamar (opsional)
             $table->decimal('discount_percent', 5, 2)->default(0); // 0–100, contoh 12.50 = 12.5%
 
             // Pajak (opsional): referensi ke tax_settings

@@ -97,11 +97,16 @@ class EditReservation extends EditRecord
                 // hotel_id default
                 $row['hotel_id'] = $row['hotel_id'] ?? $hid;
 
-                // Pax = male + female + children (min 1)
-                $male     = (int)($row['male'] ?? 0);
-                $female   = (int)($row['female'] ?? 0);
-                $children = (int)($row['children'] ?? 0);
-                $row['jumlah_orang'] = max(1, $male + $female + $children);
+                // ================== Pax (male + female + children) ==================
+                // Perbaikan: sanitasi angka, tidak bergantung reactive/afterUpdate.
+                // Jika field tidak ditampilkan (mis. hanya 'male'), yang lain dianggap 0.
+                $male     = (int) preg_replace('/\D+/', '', (string) ($row['male']     ?? '0'));
+                $female   = (int) preg_replace('/\D+/', '', (string) ($row['female']   ?? '0'));
+                $children = (int) preg_replace('/\D+/', '', (string) ($row['children'] ?? '0'));
+
+                $sum = $male + $female + $children;
+                $row['jumlah_orang'] = max(1, $sum);
+                // ====================================================================
 
                 // ================== Periode per-guest via MUTATE ==================
                 // Override dari header (sesuai permintaan: masuk mutate saja)

@@ -20,7 +20,9 @@ class ReservationResource extends Resource
 {
     protected static ?string $model = Reservation::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedHomeModern;
+
+    protected static ?string $navigationLabel = 'Room Reservation';
 
     protected static ?string $recordTitleAttribute = 'name';
 

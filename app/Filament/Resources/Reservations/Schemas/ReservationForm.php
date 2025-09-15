@@ -6,11 +6,13 @@ use App\Models\Room;
 use App\Models\Guest;
 use App\Models\Reservation;
 use Filament\Support\RawJs;
+use Illuminate\Support\Arr;
 use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use App\Models\ReservationGuest;
+use Illuminate\Support\Facades\DB;
 use Filament\Forms\Components\Radio;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -30,7 +32,7 @@ use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Forms\Components\Select as FSelect;
-use Illuminate\Support\Facades\DB;
+use App\Filament\Resources\ReservationGuests\ReservationGuestResource;
 
 class ReservationForm
 {
@@ -338,8 +340,6 @@ class ReservationForm
                                             ->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
                                     ]),
                                 ]),
-
-
                             ])
                             ->createOptionUsing(function (array $data) {
                                 return Guest::create($data)->id;
@@ -515,6 +515,132 @@ class ReservationForm
                                     ->searchable()
                                     ->live()
                                     ->reactive()
+                                    ->createOptionForm([
+
+                                        Section::make('Guest Info')->schema([
+                                            Grid::make(12)->schema([
+                                                // ENUM salutation (sesuai enum & kolom string(10))
+                                                FSelect::make('salutation')
+                                                    ->label('Title')
+                                                    ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
+                                                    ->native(false)
+                                                    ->columnSpan(3),
+
+                                                TextInput::make('name')
+                                                    ->label('Name')
+                                                    ->required()
+                                                    ->maxLength(150)
+                                                    ->columnSpan(9),
+
+                                                // OPTIONAL: jenis tamu (kolom string(20))
+                                                FSelect::make('guest_type')
+                                                    ->label('Guest Type')
+                                                    ->options([
+                                                        'DOMESTIC' => 'Domestic',
+                                                        'INTERNATIONAL'  => 'International',
+                                                    ])
+                                                    ->native(false)
+                                                    ->columnSpan(4),
+
+                                                TextInput::make('nationality')
+                                                    ->label('Nationality')
+                                                    ->maxLength(50)
+                                                    ->columnSpan(4),
+
+                                                // Alamat & data umum (sesuai panjang kolom)
+                                                TextInput::make('address')->label('Address')->maxLength(255)->columnSpan(12),
+
+                                                TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
+                                                TextInput::make('profession')->label('Profession')->maxLength(50)->columnSpan(4),
+
+                                                // Identitas
+                                                FSelect::make('id_type')
+                                                    ->label('Identity Type')
+                                                    ->options([
+                                                        'ID'             => 'National ID',
+                                                        'PASSPORT'       => 'Passport',
+                                                        'DRIVER_LICENSE' => 'Driver License',
+                                                        'OTHER'          => 'Other',
+                                                    ])
+                                                    ->native(false)
+                                                    ->columnSpan(4),
+
+                                                TextInput::make('id_card')
+                                                    ->label('Identity Number')
+                                                    ->maxLength(100)
+                                                    ->rule('not_in:-') // cegah '-' jadi nilai
+                                                    ->rules([
+                                                        // unik per-hotel & ramah soft-deletes (deleted_at NULL)
+                                                        Rule::unique('guests', 'id_card')
+                                                            ->where(
+                                                                fn($q) =>
+                                                                $q->where('hotel_id', Session::get('active_hotel_id') ?? Auth::user()?->hotel_id)
+                                                                    ->whereNull('deleted_at')
+                                                            ),
+                                                    ])
+                                                    ->nullable()
+                                                    ->columnSpan(6),
+
+                                                FileUpload::make('id_card_file')
+                                                    ->label('Attach ID (JPG/PNG/PDF)')
+                                                    ->directory('guests/id')
+                                                    ->disk('public')
+                                                    ->acceptedFileTypes(['image/jpeg', 'image/png', 'application/pdf'])
+                                                    ->maxSize(4096)
+                                                    ->downloadable()
+                                                    ->openable()
+                                                    ->columnSpan(6),
+
+                                                // Tempat & tanggal (issued_place STRING(100), birth_date/issued_date DATE)
+                                                TextInput::make('issued_place')
+                                                    ->label('Issued Place')
+                                                    ->maxLength(100)
+                                                    ->columnSpan(6),
+
+                                                DatePicker::make('issued_date')->label('Issued Date')->native(false)->columnSpan(6),
+
+                                                TextInput::make('birth_place')->label('Birth Place')->maxLength(50)->columnSpan(6),
+                                                DatePicker::make('birth_date')->label('Birth Date')->native(false)->columnSpan(6),
+
+                                                // Kontak
+                                                TextInput::make('phone')
+                                                    ->label('Phone No')
+                                                    ->maxLength(50)
+                                                    ->rule('regex:/^\\+?\\d{6,20}$/') // format sederhana, +opsional
+                                                    ->rules([
+                                                        Rule::unique('guests', 'phone')
+                                                            ->where(
+                                                                fn($q) =>
+                                                                $q->where('hotel_id', Session::get('active_hotel_id') ?? Auth::user()?->hotel_id)
+                                                                    ->whereNull('deleted_at')
+                                                            )->ignore(null), // create-option form → tidak perlu ignore
+                                                    ])
+                                                    ->nullable()
+                                                    ->columnSpan(6),
+
+                                                TextInput::make('email')
+                                                    ->label('Email')
+                                                    ->email()
+                                                    ->maxLength(150)
+                                                    ->rules([
+                                                        Rule::unique('guests', 'email')
+                                                            ->where(
+                                                                fn($q) =>
+                                                                $q->where('hotel_id', Session::get('active_hotel_id') ?? Auth::user()?->hotel_id)
+                                                                    ->whereNull('deleted_at')
+                                                            ),
+                                                    ])
+                                                    ->nullable()
+                                                    ->columnSpan(6),
+
+                                                Hidden::make('hotel_id')
+                                                    ->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
+                                            ]),
+                                        ]),
+                                    ])
+                                    ->createOptionUsing(function (array $data) {
+                                        return Guest::create($data)->id;
+                                    })
                                     ->options(function (Get $get) {
                                         $hid     = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
                                         $current = (int) ($get('guest_id') ?? 0);
@@ -708,51 +834,73 @@ class ReservationForm
                                 ->color('success')
                                 ->icon('heroicon-o-arrow-right-on-rectangle')
 
-                                // Tampilkan bila kita bisa menemukan ReservationGuest ID yang valid
+                                // Tampilkan hanya jika kita bisa resolve ID RG dari konteks
                                 ->visible(function ($record): bool {
-                                    // Jika record-nya memang ReservationGuest → pakai langsung
                                     if ($record instanceof ReservationGuest) {
                                         return filled($record->getKey());
                                     }
-
-                                    // Jika ada kolom join/alias (mis. reservation_guest_id) → pakai itu
                                     if (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
                                         return true;
                                     }
-
-                                    // Jika record adalah Reservation dan punya relasi reservationGuests → cek ada barisnya
                                     if (method_exists($record, 'reservationGuests')) {
                                         return $record->reservationGuests()->exists();
                                     }
-
-                                    return false;
+                                    return true; // biarkan terlihat; kita validasi lagi saat action jalan
                                 })
 
-                                // Arahkan ke halaman edit ReservationGuest, bukan Reservation
-                                ->url(function ($record) {
+                                // (Opsional) tampilkan info ID target di subheading modal jika kamu pakai confirmation
+                                // ->requiresConfirmation()
+                                // ->modalHeading('Buka halaman Check In?')
+                                // ->modalSubheading(function (array $arguments, $livewire, $record) {
+                                //     $rgId = null;
+                                //     // 1) Jika ini action di dalam Repeater item:
+                                //     if ($itemKey = Arr::get($arguments, 'item')) {
+                                //         $rgId = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
+                                //     }
+                                //     // 2) Fallback dari baris tabel:
+                                //     if (!$rgId && $record instanceof ReservationGuest) $rgId = $record->getKey();
+                                //     if (!$rgId && isset($record->reservation_guest_id)) $rgId = (int) $record->reservation_guest_id;
+                                //     if (!$rgId && method_exists($record, 'reservationGuests')) {
+                                //         $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
+                                //     }
+                                //     return 'ReservationGuest ID: #' . ($rgId ?: '-');
+                                // })
+
+                                ->action(function (array $arguments, $livewire, $record) {
                                     $rgId = null;
 
-                                    // 1) Jika record sudah ReservationGuest
-                                    if ($record instanceof ReservationGuest) {
-                                        $rgId = $record->getKey();
+                                    // 1) KONTEKS REPEATER ITEM — ambil ID tepat dari state form
+                                    if ($itemKey = Arr::get($arguments, 'item')) {
+                                        $rgId = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
                                     }
 
-                                    // 2) Jika ada alias kolom join
+                                    // 2) KONTEKS TABEL/RECORD — fallback yang tetap spesifik
+                                    if (!$rgId && $record instanceof ReservationGuest) {
+                                        $rgId = $record->getKey();
+                                    }
                                     if (!$rgId && isset($record->reservation_guest_id) && $record->reservation_guest_id) {
                                         $rgId = (int) $record->reservation_guest_id;
                                     }
-
-                                    // 3) Jika record adalah Reservation → ambil salah satu RG (terbaru, atau silakan ganti logika seleksinya)
                                     if (!$rgId && method_exists($record, 'reservationGuests')) {
-                                        $rgId = optional(
-                                            $record->reservationGuests()->latest('id')->first()
-                                        )?->getKey();
+                                        // Kalau kamu TIDAK ingin fallback ke "terakhir", hapus blok ini.
+                                        $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
                                     }
 
-                                    // Kalau tetap tidak ketemu, jangan kembalikan URL (action akan tetap hidden oleh visible() di atas)
-                                    return $rgId ? url("/admin/reservation-guests/{$rgId}/edit") : null;
-                                })
-                                ->openUrlInNewTab(false),
+                                    if (! $rgId) {
+                                        Notification::make()
+                                            ->title('Gagal membuka Check In')
+                                            ->body('ReservationGuest ID tidak ditemukan dari item/form yang dipilih.')
+                                            ->danger()
+                                            ->send();
+                                        return;
+                                    }
+
+                                    // BUKA DI TAB BARU (tanpa reload halaman sekarang)
+                                    $url = ReservationGuestResource::getUrl('edit', ['record' => $rgId]);
+                                    $livewire->js(<<<JS
+            window.open("{$url}", "_blank", "noopener");
+        JS);
+                                }),
                             Action::make('hapus_sekarang')
                                 ->label('Hapus (langsung)')
                                 ->icon('heroicon-o-trash')

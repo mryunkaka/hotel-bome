@@ -14,10 +14,192 @@ use Illuminate\Support\Str;
 use App\Models\AccountLedger;
 use Illuminate\Support\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Models\ReservationGuest;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Storage;
 
 Route::redirect('/', '/admin');
+
+Route::post('/admin/reservation-guests/{guest}/checkin', function (Request $request, ReservationGuest $guest) {
+    // idempotent: hanya set jika belum terisi
+    if (blank($guest->actual_checkin)) {
+        $guest->forceFill(['actual_checkin' => now()])->save();
+        // flash untuk notifikasi di Blade
+        return back()->with('flash_success', sprintf(
+            'Checked-in ReservationGuest #%d pada %s',
+            $guest->id,
+            now()->format('d/m/Y H:i')
+        ));
+    }
+
+    return back()->with('flash_info', sprintf(
+        'ReservationGuest #%d sudah check-in pada %s',
+        $guest->id,
+        \Illuminate\Support\Carbon::parse($guest->actual_checkin)->format('d/m/Y H:i')
+    ));
+})->name('reservation-guests.checkin')->middleware(['web', 'auth']);
+
+Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest $guest) {
+    // ===== Validasi minimal: harus punya reservation =====
+    $reservation = $guest->reservation()->with([
+        'guest:id,name,salutation,address,city,phone,email',
+        'group:id,name,address,city,phone,handphone,fax,email',
+        'creator:id,name',
+    ])->firstOrFail();
+
+    // ===== Hotel aktif (dari session atau dari record) =====
+    $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
+    $hotel = Hotel::find($hid);
+
+    // ===== Eager load untuk RG terkait =====
+    $guest->loadMissing([
+        'guest:id,name,salutation,city,phone,email,address',
+        'room:id,room_no,type,price',
+        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,deposit,created_at,entry_date,reserved_by_type,guest_id',
+        'reservation.creator:id,name',
+        'reservation.group:id,name,address,city,phone,handphone,fax,email',
+        'reservation.guest:id,name,salutation,address,city,phone,email',
+    ]);
+
+    // ===== Logo ke base64 =====
+    $logoData = null;
+    if (function_exists('buildPdfLogoData')) {
+        $logoData = buildPdfLogoData($hotel?->logo ?? null);
+    } else {
+        $logoPath = $hotel?->logo ?? null;
+        if ($logoPath && ! Str::startsWith($logoPath, ['http://', 'https://'])) {
+            try {
+                $full = Storage::disk('public')->path($logoPath);
+                if (is_file($full)) {
+                    $mime     = mime_content_type($full) ?: 'image/png';
+                    $logoData = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($full));
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+    }
+
+    // ===== Orientasi kertas via ?o=portrait|landscape =====
+    $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
+        ? strtolower(request('o', 'portrait'))
+        : 'portrait';
+
+    // ===== Penentuan pihak pemesan (sama seperti reservasi) =====
+    $type = strtoupper(trim((string) ($reservation->reserved_by_type ?? 'GUEST')));
+
+    $companyName = null;
+    $fax = null;
+    $billTo = [];
+
+    if ($type === 'GROUP' && $reservation->group) {
+        $party = $reservation->group;
+        $companyName = $party->name;
+        $billTo = [
+            'input'   => 'Company Name',
+            'name'    => $party->name,
+            'address' => $party->address,
+            'city'    => $party->city,
+            'phone'   => $party->phone,
+            'mobile'  => $party->handphone ?? $party->phone,
+            'email'   => $party->email,
+        ];
+        $fax = $party->fax;
+    } else {
+        $g = $reservation->guest ?: $guest->guest;
+        $companyName = $g?->name;
+        $billTo = [
+            'input'   => 'Reserved By',
+            'name'    => $g?->name,
+            'address' => $g?->address,
+            'city'    => $g?->city,
+            'phone'   => $g?->phone,
+            'mobile'  => $g?->phone,
+            'email'   => $g?->email,
+        ];
+        $fax = null;
+    }
+
+    // ===== Validasi hanya boleh print kalau sudah actual_checkin =====
+    abort_if(blank($guest->actual_checkin), 403, 'Belum check-in.');
+
+    // ===== Kalkulasi slip (nota check-in) =====
+    $actualIn  = $guest->actual_checkin;
+    $actualOut = $guest->actual_checkout ?: $guest->expected_checkout; // fallback ke expected bila checkout belum diisi
+    $nights    = ($actualIn && $actualOut)
+        ? max(1, Carbon::parse($actualIn)->startOfMinute()->diffInDays(Carbon::parse($actualOut)->startOfMinute()))
+        : 1;
+
+    $rate      = (float) ($guest->room_rate ?? $guest->room?->price ?? 0);
+    $pax       = (int) ($guest->jumlah_orang ?? max(1, (int)$guest->male + (int)$guest->female + (int)$guest->children));
+    $subtotal  = $rate * $nights;
+
+    // contoh pajak/servis = 0 (sesuaikan nanti bila ada rules)
+    $tax_total = 0.0;
+    $total     = $subtotal + $tax_total;
+
+    $clerkName = $reservation->creator?->name;
+    $reservedByForPrint = $clerkName ?: ($billTo['name'] ?? null);
+
+    $viewData = [
+        'paper'       => 'A4',
+        'orientation' => $orientation,
+
+        'hotel'       => $hotel,
+        'logoData'    => $logoData,
+
+        'title'       => 'GUEST CHECK-IN',
+        'invoiceId'   => $reservation->id,
+        'invoiceNo'   => $reservation->reservation_no ?? ('#' . $reservation->id),
+        'issuedAt'    => $reservation->entry_date ?? $reservation->created_at,
+        'generatedAt' => now(),
+
+        'payment'     => ['method' => strtolower($reservation->method ?? 'personal'), 'ref' => null],
+        'status'      => $reservation->status ?? 'CONFIRM',
+        'companyName' => $companyName,
+        'fax'         => $fax,
+        'reserved_by' => $reservedByForPrint,
+        'reservedType' => $type,
+        'clerkName'   => $clerkName,
+
+        'billTo'      => $billTo,
+
+        // Baris tunggal (RG ini saja)
+        'row'         => [
+            'room_no'       => $guest->room?->room_no ?: ('#' . $guest->room_id),
+            'category'      => $guest->room?->type ?: '-',
+            'rate'          => $rate,
+            'nights'        => $nights,
+            'ps'            => $pax,
+            'guest_display' => $guest->guest?->display_name ?? ($guest->guest?->salutation?->value . ' ' . $guest->guest?->name),
+            'actual_in'     => $actualIn,
+            'actual_out'    => $guest->actual_checkout,
+            'expected_out'  => $guest->expected_checkout,
+        ],
+
+        'subtotal'    => $subtotal,
+        'tax_total'   => $tax_total,
+        'total'       => $total,
+
+        'notes'       => $reservation->remarks ?? null,
+        'footerText'  => 'Printed by ' . ($clerkName ?? 'System'),
+        'showSignature' => true,
+    ];
+
+    if (request()->boolean('html')) {
+        return response()->view('prints.reservations.checkin', $viewData);
+    }
+
+    $pdf = Pdf::loadView('prints.reservations.checkin', $viewData)->setPaper('a4', $orientation);
+    $pdf->setOption(['isRemoteEnabled' => false]);
+
+    $filename = 'checkin-' . ($reservation->reservation_no ?? $reservation->id) . '-' . $guest->id . '.pdf';
+
+    return response()->stream(fn() => print($pdf->output()), 200, [
+        'Content-Type'        => 'application/pdf',
+        'Content-Disposition' => 'inline; filename="' . $filename . '"',
+    ]);
+})->name('reservation-guests.print');
 
 Route::get('/admin/reservations/{reservation}/print', function (Reservation $reservation) {
     // ===== Hotel aktif (dari session atau dari record) =====
@@ -214,7 +396,6 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         'Content-Disposition' => 'inline; filename="' . $filename . '"',
     ]);
 })->name('reservations.print');
-
 
 Route::get('/admin/invoices/{invoice}/preview-pdf', function (Invoice $invoice) {
     $hid   = (int) (session('active_hotel_id') ?? 0);

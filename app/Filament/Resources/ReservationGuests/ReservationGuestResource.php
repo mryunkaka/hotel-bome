@@ -18,7 +18,9 @@ class ReservationGuestResource extends Resource
 {
     protected static ?string $model = ReservationGuest::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedKey;
+
+    protected static ?string $navigationLabel = 'Guest Check In';
 
     protected static ?string $recordTitleAttribute = 'name';
 

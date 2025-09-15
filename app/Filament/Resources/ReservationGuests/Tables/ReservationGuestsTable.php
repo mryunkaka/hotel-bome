@@ -14,57 +14,40 @@ class ReservationGuestsTable
     {
         return $table
             ->columns([
-                TextColumn::make('hotel.name')
-                    ->searchable(),
-                TextColumn::make('reservation.id')
-                    ->searchable(),
-                TextColumn::make('guest.name')
-                    ->searchable(),
-                TextColumn::make('room.id')
-                    ->searchable(),
-                TextColumn::make('person')
-                    ->searchable(),
-                TextColumn::make('jumlah_orang')
-                    ->numeric()
+                TextColumn::make('reservation.reservation_no')
+                    ->label('Reservation No')
+                    ->searchable()
                     ->sortable(),
-                TextColumn::make('male')
-                    ->numeric()
-                    ->sortable(),
-                TextColumn::make('female')
-                    ->numeric()
-                    ->sortable(),
-                TextColumn::make('children')
-                    ->numeric()
-                    ->sortable(),
-                TextColumn::make('charge_to')
-                    ->searchable(),
-                TextColumn::make('room_rate')
-                    ->numeric()
-                    ->sortable(),
-                TextColumn::make('expected_checkin')
-                    ->dateTime()
-                    ->sortable(),
-                TextColumn::make('expected_checkout')
-                    ->dateTime()
-                    ->sortable(),
+
                 TextColumn::make('actual_checkin')
-                    ->dateTime()
+                    ->label('Actual Checkin')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable(),
+
                 TextColumn::make('actual_checkout')
-                    ->dateTime()
+                    ->label('Actual Checkout')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable(),
-                TextColumn::make('created_at')
-                    ->dateTime()
+
+                TextColumn::make('room.room_no')
+                    ->label('Room')
                     ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('updated_at')
-                    ->dateTime()
+                    ->searchable(),
+
+                TextColumn::make('guest.display_name')
+                    ->label('Guest')
                     ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('deleted_at')
-                    ->dateTime()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->searchable(),
+
+                TextColumn::make('jumlah_orang')
+                    ->label('Pax')
+                    ->numeric()
+                    ->sortable(),
+
+                TextColumn::make('room_rate')
+                    ->label('Room Rate')
+                    ->money('idr', true)
+                    ->sortable(),
             ])
             ->filters([
                 //

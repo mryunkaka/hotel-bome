@@ -10,6 +10,7 @@ use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
+use App\Models\ReservationGuest;
 use Filament\Forms\Components\Radio;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -20,6 +21,7 @@ use Filament\Forms\Components\Textarea;
 use Illuminate\Support\Facades\Session;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\ViewField;
+use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\FileUpload;
@@ -28,6 +30,7 @@ use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Forms\Components\Select as FSelect;
+use Illuminate\Support\Facades\DB;
 
 class ReservationForm
 {
@@ -447,7 +450,8 @@ class ReservationForm
                         })
                         ->schema([
                             Grid::make(12)->schema([
-
+                                Hidden::make('id')->dehydrated(true)
+                                    ->disabled(),
                                 // =========================
                                 // ROW 1 (utama / wajib)
                                 // =========================
@@ -697,13 +701,148 @@ class ReservationForm
                                     ->columnSpan(3),
                             ])->columnSpanFull(),
                         ])
-
-                        ->extraItemActions([
-                            Action::make('hapus')
+                        ->deletable(true)
+                        ->deleteAction(function (Action $action) {
+                            $action
+                                ->label('Hapus')
+                                ->icon('heroicon-o-trash')
+                                ->color('danger')
                                 ->requiresConfirmation()
-                                ->action(fn($record, $livewire) => $record->delete())
-                        ]),
+                                ->modalHeading('Hapus baris ini?')
+                                ->modalSubheading(function (Action $action) {
+                                    // 1) coba dari state (jika Hidden('id')->dehydrated(true))
+                                    $rgId = data_get($action->getArguments(), 'state.id');
 
+                                    // 2) kalau tidak ada, parse dari item key: "record-{id}"
+                                    if (! $rgId) {
+                                        $itemKey = data_get($action->getArguments(), 'item'); // contoh: "record-7"
+                                        if (is_string($itemKey) && preg_match('/^record-(\d+)$/', $itemKey, $m)) {
+                                            $rgId = (int) $m[1]; // <- inilah ReservationGuest ID
+                                        }
+                                    }
+
+                                    // (opsional) tampilkan juga id reservation (parent) supaya jelas
+                                    $reservationId = data_get($action->getArguments(), 'recordKey');
+
+                                    return 'Tindakan ini tidak dapat dibatalkan. '
+                                        . 'ID RG: #' . ($rgId ?: '-')
+                                        . ($reservationId ? " (Reservation #{$reservationId})" : '');
+                                })
+                                ->modalButton('Hapus');
+                        })
+                        ->extraItemActions([
+                            Action::make('check_in')
+                                ->label('Check In')
+                                ->color('success')
+                                ->icon('heroicon-o-arrow-right-on-rectangle')
+
+                                // Tampilkan bila kita bisa menemukan ReservationGuest ID yang valid
+                                ->visible(function ($record): bool {
+                                    // Jika record-nya memang ReservationGuest → pakai langsung
+                                    if ($record instanceof ReservationGuest) {
+                                        return filled($record->getKey());
+                                    }
+
+                                    // Jika ada kolom join/alias (mis. reservation_guest_id) → pakai itu
+                                    if (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
+                                        return true;
+                                    }
+
+                                    // Jika record adalah Reservation dan punya relasi reservationGuests → cek ada barisnya
+                                    if (method_exists($record, 'reservationGuests')) {
+                                        return $record->reservationGuests()->exists();
+                                    }
+
+                                    return false;
+                                })
+
+                                // Arahkan ke halaman edit ReservationGuest, bukan Reservation
+                                ->url(function ($record) {
+                                    $rgId = null;
+
+                                    // 1) Jika record sudah ReservationGuest
+                                    if ($record instanceof ReservationGuest) {
+                                        $rgId = $record->getKey();
+                                    }
+
+                                    // 2) Jika ada alias kolom join
+                                    if (!$rgId && isset($record->reservation_guest_id) && $record->reservation_guest_id) {
+                                        $rgId = (int) $record->reservation_guest_id;
+                                    }
+
+                                    // 3) Jika record adalah Reservation → ambil salah satu RG (terbaru, atau silakan ganti logika seleksinya)
+                                    if (!$rgId && method_exists($record, 'reservationGuests')) {
+                                        $rgId = optional(
+                                            $record->reservationGuests()->latest('id')->first()
+                                        )?->getKey();
+                                    }
+
+                                    // Kalau tetap tidak ketemu, jangan kembalikan URL (action akan tetap hidden oleh visible() di atas)
+                                    return $rgId ? url("/admin/reservation-guests/{$rgId}/edit") : null;
+                                })
+                                ->openUrlInNewTab(false),
+
+                            // Action::make('hapus')
+                            //     ->label('Hapus')
+                            //     ->icon('heroicon-o-trash')
+                            //     ->color('danger')
+                            //     ->requiresConfirmation()
+                            //     ->modalHeading('Hapus data ini?')
+                            //     ->modalSubheading(function ($record) {
+                            //         // --- Resolve ReservationGuest ID persis seperti di check_in ---
+                            //         $rgId = null;
+
+                            //         if ($record instanceof ReservationGuest) {
+                            //             $rgId = $record->getKey();
+                            //         } elseif (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
+                            //             $rgId = (int) $record->reservation_guest_id;
+                            //         } elseif (method_exists($record, 'reservationGuests')) {
+                            //             $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
+                            //         }
+
+                            //         return 'Tindakan ini tidak dapat dibatalkan';
+                            //     })
+                            //     ->action(function ($record, $livewire) {
+                            //         // --- Resolve model ReservationGuest yang akan dihapus ---
+                            //         $rg = null;
+
+                            //         if ($record instanceof ReservationGuest) {
+                            //             $rg = $record;
+                            //         } elseif (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
+                            //             $rg = ReservationGuest::find($record->reservation_guest_id);
+                            //         } elseif (method_exists($record, 'reservationGuests')) {
+                            //             $rg = $record->reservationGuests()->latest('id')->first();
+                            //         }
+
+                            //         if (!$rg) {
+                            //             Notification::make()
+                            //                 ->title('Tidak menemukan ReservationGuest pada baris ini.')
+                            //                 ->danger()
+                            //                 ->send();
+                            //             return;
+                            //         }
+
+                            //         $rgId = $rg->getKey();
+
+                            //         try {
+                            //             DB::transaction(fn() => $rg->delete());
+
+                            //             Notification::make()
+                            //                 ->title('ReservationGuest #' . $rgId . ' berhasil dihapus')
+                            //                 ->success()
+                            //                 ->send();
+
+                            //             // refresh tabel supaya baris hilang
+                            //             $livewire->dispatch('refresh');
+                            //         } catch (\Throwable $e) {
+                            //             Notification::make()
+                            //                 ->title('Gagal menghapus #' . $rgId)
+                            //                 ->body(config('app.debug') ? $e->getMessage() : 'Terjadi kesalahan saat menghapus data.')
+                            //                 ->danger()
+                            //                 ->send();
+                            //         }
+                            //     }),
+                        ]),
                 ])
                 ->columnSpanFull(),
         ]);

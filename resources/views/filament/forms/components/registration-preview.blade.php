@@ -15,8 +15,8 @@
     $money = fn($v) => ReservationView::fmtMoney($v);
 
     // Lama inap fallback (hanya jika properti length_of_stay tidak tersedia)
-    $arrivalRaw   = $res?->expected_arrival;
-    $departureRaw = $res?->expected_departure;
+    $arrivalRaw   = $rg?->expected_checkin;
+    $departureRaw = $rg?->expected_checkout;
     $nights = null;
     if ($arrivalRaw && $departureRaw) {
         $arr = Carbon::parse($arrivalRaw)->startOfDay();
@@ -64,7 +64,7 @@
      * Aturan default (bisa diubah):
      * - Rp 25.000 per jam, dibulatkan ke atas
      * - Maksimal 50% dari basicRate
-     * - Berlaku jika (actual_checkin ATAU now) > expected_arrival
+     * - Berlaku jika (actual_checkin ATAU now) > expected_checkin
      */
     $LATE_PENALTY_PER_HOUR            = 25000;
     $LATE_PENALTY_MAX_PERCENT_OF_BASE = 50; // batas penalty 50% dari room rate
@@ -72,8 +72,8 @@
     $penaltyHours = 0;
     $penaltyRp    = 0;
 
-    if ($res?->expected_arrival) {
-        $arrivalAt = \Carbon\Carbon::parse($res->expected_arrival, 'Asia/Makassar');
+    if ($rg?->expected_checkin) {
+        $arrivalAt = \Carbon\Carbon::parse($rg->expected_checkin, 'Asia/Makassar');
         $refTime   = $rg?->actual_checkin
             ? \Carbon\Carbon::parse($rg->actual_checkin, 'Asia/Makassar')
             : \Carbon\Carbon::now('Asia/Makassar');
@@ -270,8 +270,8 @@
                         </div>
                     </div>
 
-                    <div class="reg-row"><div>Arrival</div><div>{{ $fmt($res?->expected_arrival) }}</div></div>
-                    <div class="reg-row"><div>Departure</div><div>{{ $fmt($res?->expected_departure) }}</div></div>
+                    <div class="reg-row"><div>Arrival</div><div>{{ $fmt($rg?->expected_checkin) }}</div></div>
+                    <div class="reg-row"><div>Departure</div><div>{{ $fmt($rg?->expected_checkout) }}</div></div>
                     <div class="reg-row"><div>Company</div><div>{{ $company?->name ?? '-' }}</div></div>
                     <div class="reg-row"><div>Code</div><div>{{ $res?->option ?? '-' }}</div></div>
                     <div class="reg-row"><div>Charge To</div><div>{{ $res?->method ?? '-' }}</div></div>

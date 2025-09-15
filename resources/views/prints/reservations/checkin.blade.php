@@ -5,6 +5,7 @@
     <meta charset="utf-8">
     @php
         use Illuminate\Support\Carbon;
+        use App\Support\ReservationMath;
 
         $paper = strtoupper($paper ?? 'A4');
         $orientation = in_array(strtolower($orientation ?? 'portrait'), ['portrait', 'landscape'], true)
@@ -12,9 +13,52 @@
             : 'portrait';
 
         $fmtMoney = fn($v) => 'Rp ' . number_format((float) $v, 0, ',', '.');
-        $fmtDate = fn($v, $withTime = true) => $v ? Carbon::parse($v)->format($withTime ? 'd/m/Y H:i' : 'd/m/Y') : '-';
+        // format ringkas supaya tidak terpotong
+        $fmtDateShort = fn($v) => $v ? Carbon::parse($v)->format('d/m H:i') : '-';
+        $fmtDateFull = fn($v) => $v ? Carbon::parse($v)->format('d/m/Y H:i') : '-';
 
         $hotelRight = array_filter([$hotel?->name, $hotel?->address, $hotel?->city, $hotel?->phone, $hotel?->email]);
+
+        // ====== PERHITUNGAN RATE (PAKAI HELPER) ======
+        $baseRate = (float) ($row['rate'] ?? 0);
+        $discPct = (float) ($row['discount_percent'] ?? 0);
+        $taxPct = (float) ($row['tax_percent'] ?? 0);
+        $serviceRp = (float) ($row['service'] ?? 0);
+        $extraBedRp = (float) ($row['extra_bed_total'] ?? 0);
+        $lateRp = (float) ($row['late_arrival_penalty'] ?? 0);
+        $nights = (int) max(1, (int) ($row['nights'] ?? 1));
+
+        $finalRatePerNight = ReservationMath::calcFinalRate(
+            [
+                'rate' => $baseRate,
+                'discount_percent' => $discPct,
+                'tax_percent' => $taxPct,
+                'service' => $serviceRp,
+                'extra_bed_total' => $extraBedRp,
+                'late_arrival_penalty' => $lateRp,
+                'id_tax' => $row['id_tax'] ?? null,
+            ],
+            [
+                'tax_lookup' => $taxLookup ?? [],
+                'service_taxable' => false,
+                'rounding' => 0,
+            ],
+        );
+
+        $amount = $finalRatePerNight * $nights;
+        $subtotal = $amount;
+        $tax_total = 0;
+        $total = $subtotal;
+
+        $breakdown = [
+            'basic_rate' => $baseRate,
+            'room_discount_percent' => $discPct,
+            'room_tax_percent' => $taxPct,
+            'service_rp' => $serviceRp,
+            'extra_bed_rp' => $extraBedRp,
+            'late_arrival_penalty_rp' => $lateRp,
+            'rate_plus_plus' => $finalRatePerNight,
+        ];
     @endphp
 
     <title>Check-in Slip — {{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</title>
@@ -91,6 +135,7 @@
             width: 100%;
             border-collapse: collapse;
             margin: 8px 0;
+            table-layout: fixed;
         }
 
         .kv td {
@@ -101,11 +146,13 @@
         .k {
             width: 130px;
             color: #374151;
+            white-space: nowrap;
         }
 
         .v {
             color: #111827;
             font-weight: 600;
+            white-space: nowrap;
         }
 
         .line {
@@ -113,11 +160,13 @@
             margin: 10px 0;
         }
 
+        /* ===== Items table: anti-wrap + width ketat + font kecil ===== */
         table.items {
             width: 100%;
             border-collapse: collapse;
-            font-size: 10px;
+            font-size: 9px;
             margin-top: 6px;
+            table-layout: fixed;
         }
 
         .items thead th {
@@ -125,11 +174,15 @@
             border-bottom: 1px solid #1F2937;
             padding: 6px;
             text-align: left;
+            white-space: nowrap;
         }
 
         .items td {
             border-bottom: 1px solid #D1D5DB;
             padding: 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .center {
@@ -140,28 +193,91 @@
             text-align: right;
         }
 
-        .narrow {
-            width: 48px;
+        .nowrap {
             white-space: nowrap;
         }
 
-        .totals {
+        /* lebar tetap agar tidak wrap; category dibiarkan lebar */
+        .col-room {
+            width: 44px;
+        }
+
+        /* kecil */
+        .col-cat {
+            width: auto;
+        }
+
+        /* panjang/fleksibel */
+        .col-pax {
+            width: 36px;
+            text-align: center;
+        }
+
+        .col-rate {
+            width: 88px;
+            text-align: right;
+        }
+
+        .col-night {
+            width: 40px;
+            text-align: center;
+        }
+
+        .col-in {
+            width: 96px;
+            text-align: center;
+        }
+
+        /* cukup untuk d/m H:i */
+        .col-out {
+            width: 108px;
+            text-align: center;
+        }
+
+        /* sedikit lebih panjang */
+        .col-amount {
+            width: 100px;
+            text-align: right;
+        }
+
+        /* ===== Totals box (kanan) jadi satu tabel (breakdown + subtotal/total) ===== */
+        .totals-box-wrap {
             width: 100%;
-            margin-top: 10px;
+            margin-top: 12px;
         }
 
-        .totals td {
-            padding: 4px 0;
+        .totals-box {
+            margin-left: auto;
+            width: 360px;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 10px;
         }
 
-        .totals .k {
+        .totals-box td {
+            padding: 6px 6px;
+            white-space: nowrap;
+        }
+
+        .tb-k {
+            width: 200px;
+            color: #374151;
+        }
+
+        .tb-v {
+            width: 160px;
             text-align: right;
-            padding-right: 8px;
+            font-weight: 600;
         }
 
-        .totals .v {
-            text-align: right;
-            min-width: 140px;
+        .tb-line th {
+            border-top: 1.5px solid #1F2937;
+            padding-top: 8px;
+        }
+
+        .tb-strong .tb-k,
+        .tb-strong .tb-v {
+            font-weight: 700;
         }
 
         .footer {
@@ -184,19 +300,10 @@
         .foot-right {
             text-align: right;
         }
-
-        @media print {
-            .actions {
-                display: none;
-            }
-        }
     </style>
 </head>
 
 <body>
-    <div class="actions" style="margin:8px 0;">
-        <button onclick="window.print()">Print</button>
-    </div>
 
     {{-- ===== HEADER ===== --}}
     <table class="hdr-table">
@@ -225,7 +332,7 @@
         </tr>
     </table>
 
-    {{-- ===== INFO ATAS (2 kolom) ===== --}}
+    {{-- ===== INFO ATAS ===== --}}
     <table class="kv">
         <tr>
             <td class="k">Status</td>
@@ -237,7 +344,7 @@
             <td class="k">Reserved By</td>
             <td class="v">{{ $companyName ?: '-' }}</td>
             <td class="k">Entry Date</td>
-            <td class="v">{{ $fmtDate($issuedAt ?? ($generatedAt ?? now()), false) }}</td>
+            <td class="v">{{ $fmtDateFull($issuedAt ?? ($generatedAt ?? now())) }}</td>
         </tr>
         <tr>
             <td class="k">Guest</td>
@@ -249,55 +356,82 @@
 
     <div class="line"></div>
 
-    {{-- ===== ITEM (baris RG ini) ===== --}}
+    {{-- ===== ITEM (baris RG) ===== --}}
     <table class="items">
         <thead>
             <tr>
-                <th class="narrow">ROOM</th>
-                <th>CATEGORY</th>
-                <th class="center narrow">PAX</th>
-                <th class="right narrow">RATE</th>
-                <th class="center narrow">NIGHTS</th>
-                <th class="center narrow">ACT CHECK-IN</th>
-                <th class="center narrow">ACT/EXP CHECK-OUT</th>
-                <th class="right narrow">AMOUNT</th>
+                <th class="col-room">ROOM</th>
+                <th class="col-cat">CATEGORY</th>
+                <th class="col-pax center">PAX</th>
+                <th class="col-rate right">RATE</th>
+                <th class="col-night center">NIGHTS</th>
+                <th class="col-in center">CHECK-IN</th>
+                <th class="col-out center">CHECK-OUT</th>
+                <th class="col-amount right">AMOUNT</th>
             </tr>
         </thead>
         <tbody>
             <tr>
-                <td>{{ $row['room_no'] ?? '-' }}</td>
-                <td>{{ $row['category'] ?? '-' }}</td>
-                <td class="center">{{ (int) ($row['ps'] ?? 1) }}</td>
-                <td class="right">{{ $fmtMoney($row['rate'] ?? 0) }}</td>
-                <td class="center">{{ (int) ($row['nights'] ?? 1) }}</td>
-                <td class="center">{{ $fmtDate($row['actual_in'] ?? null, true) }}</td>
-                <td class="center">
+                <td class="nowrap">{{ $row['room_no'] ?? '-' }}</td>
+                <td class="nowrap">{{ $row['category'] ?? '-' }}</td>
+                <td class="center nowrap">{{ (int) ($row['ps'] ?? 1) }}</td>
+                <td class="right nowrap">{{ $fmtMoney($finalRatePerNight) }}</td>
+                <td class="center nowrap">{{ $nights }}</td>
+                <td class="center nowrap">{{ $fmtDateShort($row['actual_in'] ?? null) }}</td>
+                <td class="center nowrap">
                     @if (!empty($row['actual_out']))
-                        {{ $fmtDate($row['actual_out'], true) }}
+                        {{ $fmtDateShort($row['actual_out']) }}
                     @else
-                        {{ $fmtDate($row['expected_out'] ?? null, true) }}
+                        {{ $fmtDateShort($row['expected_out'] ?? null) }}
                     @endif
                 </td>
-                <td class="right">{{ $fmtMoney(($row['rate'] ?? 0) * ($row['nights'] ?? 1)) }}</td>
+                <td class="right nowrap">{{ $fmtMoney($amount) }}</td>
             </tr>
         </tbody>
     </table>
 
-    {{-- ===== TOTALS ===== --}}
-    <table class="totals">
-        <tr>
-            <td class="k">Subtotal</td>
-            <td class="v">{{ $fmtMoney($subtotal ?? 0) }}</td>
-        </tr>
-        <tr>
-            <td class="k">Tax</td>
-            <td class="v">{{ $fmtMoney($tax_total ?? 0) }}</td>
-        </tr>
-        <tr>
-            <td class="k"><strong>Total</strong></td>
-            <td class="v"><strong>{{ $fmtMoney($total ?? 0) }}</strong></td>
-        </tr>
-    </table>
+    {{-- ===== TOTALS BOX (gabung breakdown + totals) ===== --}}
+    <div class="totals-box-wrap">
+        <table class="totals-box">
+            <tr>
+                <td class="tb-k">Basic Rate</td>
+                <td class="tb-v">{{ $fmtMoney($breakdown['basic_rate']) }}</td>
+            </tr>
+            <tr>
+                <td class="tb-k">Room Discount</td>
+                <td class="tb-v">{{ number_format((float) $breakdown['room_discount_percent'], 2, ',', '.') }}%</td>
+            </tr>
+            <tr>
+                <td class="tb-k">Room Tax</td>
+                <td class="tb-v">{{ number_format((float) $breakdown['room_tax_percent'], 2, ',', '.') }}%</td>
+            </tr>
+            <tr>
+                <td class="tb-k">Service (Rp)</td>
+                <td class="tb-v">{{ $fmtMoney($breakdown['service_rp']) }}</td>
+            </tr>
+            <tr>
+                <td class="tb-k">Extra Bed</td>
+                <td class="tb-v">{{ $fmtMoney($breakdown['extra_bed_rp']) }}</td>
+            </tr>
+            <tr>
+                <td class="tb-k">Late Arrival Penalty</td>
+                <td class="tb-v">{{ $fmtMoney($breakdown['late_arrival_penalty_rp']) }}</td>
+            </tr>
+
+            <tr class="tb-line">
+                <th colspan="2"></th>
+            </tr>
+
+            <tr>
+                <td class="tb-k"><strong>Total</strong></td>
+                <td class="tb-v"><strong>{{ $fmtMoney($breakdown['rate_plus_plus']) }}</strong></td>
+            </tr>
+
+            <tr class="tb-line">
+                <th colspan="2"></th>
+            </tr>
+        </table>
+    </div>
 
     <div class="line"></div>
 
@@ -308,7 +442,7 @@
                 <td class="foot-left">Page : 1</td>
                 <td class="foot-mid">
                     {{ $hotel?->city ? $hotel->city . ' , ' : '' }}
-                    {{ $fmtDate($generatedAt ?? now(), false) }} - Reception/Cashier
+                    {{ $fmtDateFull($generatedAt ?? now()) }} - Reception/Cashier
                 </td>
                 <td class="foot-right">&nbsp;</td>
             </tr>

@@ -60,18 +60,16 @@ class EditReservation extends EditRecord
                 ->setTime(12, 0);
         }
 
-        // Reserved By: sekarang hanya pakai guest_id / group_id
+        // Reserved By...
         $type = $data['reserved_by_type'] ?? 'GUEST';
-
         if ($type === 'GUEST') {
             if (empty($data['guest_id'])) {
                 throw ValidationException::withMessages([
                     'guest_id' => 'Silakan pilih Guest.',
                 ]);
             }
-            // pastikan tidak tercampur
             $data['group_id'] = null;
-        } else { // GROUP
+        } else {
             if (empty($data['group_id'])) {
                 throw ValidationException::withMessages([
                     'group_id' => 'Silakan pilih Group.',
@@ -85,9 +83,12 @@ class EditReservation extends EditRecord
             ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
             : null;
 
+        // ✅ PERBAIKAN: kalau expected_departure kosong, hitung dari arrival + nights (bukan +1 hari tetap)
         $headerOut = !empty($data['expected_departure'])
             ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
-            : ($headerIn ? $headerIn->copy()->addDay()->setTime(12, 0) : null);
+            : ($headerIn
+                ? $headerIn->copy()->addDays(max(1, (int) ($data['nights'] ?? 1)))->setTime(12, 0)
+                : null);
 
         // === Sinkron data repeater reservationGuests (tanpa live/hook) ===
         if (! empty($data['reservationGuests']) && is_array($data['reservationGuests'])) {
@@ -98,8 +99,6 @@ class EditReservation extends EditRecord
                 $row['hotel_id'] = $row['hotel_id'] ?? $hid;
 
                 // ================== Pax (male + female + children) ==================
-                // Perbaikan: sanitasi angka, tidak bergantung reactive/afterUpdate.
-                // Jika field tidak ditampilkan (mis. hanya 'male'), yang lain dianggap 0.
                 $male     = (int) preg_replace('/\D+/', '', (string) ($row['male']     ?? '0'));
                 $female   = (int) preg_replace('/\D+/', '', (string) ($row['female']   ?? '0'));
                 $children = (int) preg_replace('/\D+/', '', (string) ($row['children'] ?? '0'));
@@ -109,7 +108,7 @@ class EditReservation extends EditRecord
                 // ====================================================================
 
                 // ================== Periode per-guest via MUTATE ==================
-                // Override dari header (sesuai permintaan: masuk mutate saja)
+                // Tetap override dari header
                 if ($headerIn) {
                     $row['expected_checkin'] = $headerIn->copy();
                 } else {
@@ -119,6 +118,7 @@ class EditReservation extends EditRecord
                 if ($headerOut) {
                     $row['expected_checkout'] = $headerOut->copy();
                 } else {
+                    // fallback terakhir: +1 hari dari checkin
                     $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
                 }
 
@@ -153,6 +153,7 @@ class EditReservation extends EditRecord
 
         return $data;
     }
+
 
     // Nilai default saat membuka form edit (untuk UI saja)
     protected function mutateFormDataBeforeFill(array $data): array

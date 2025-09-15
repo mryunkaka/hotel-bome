@@ -701,35 +701,7 @@ class ReservationForm
                                     ->columnSpan(3),
                             ])->columnSpanFull(),
                         ])
-                        ->deletable(true)
-                        ->deleteAction(function (Action $action) {
-                            $action
-                                ->label('Hapus')
-                                ->icon('heroicon-o-trash')
-                                ->color('danger')
-                                ->requiresConfirmation()
-                                ->modalHeading('Hapus baris ini?')
-                                ->modalSubheading(function (Action $action) {
-                                    // 1) coba dari state (jika Hidden('id')->dehydrated(true))
-                                    $rgId = data_get($action->getArguments(), 'state.id');
-
-                                    // 2) kalau tidak ada, parse dari item key: "record-{id}"
-                                    if (! $rgId) {
-                                        $itemKey = data_get($action->getArguments(), 'item'); // contoh: "record-7"
-                                        if (is_string($itemKey) && preg_match('/^record-(\d+)$/', $itemKey, $m)) {
-                                            $rgId = (int) $m[1]; // <- inilah ReservationGuest ID
-                                        }
-                                    }
-
-                                    // (opsional) tampilkan juga id reservation (parent) supaya jelas
-                                    $reservationId = data_get($action->getArguments(), 'recordKey');
-
-                                    return 'Tindakan ini tidak dapat dibatalkan. '
-                                        . 'ID RG: #' . ($rgId ?: '-')
-                                        . ($reservationId ? " (Reservation #{$reservationId})" : '');
-                                })
-                                ->modalButton('Hapus');
-                        })
+                        ->deletable(false)
                         ->extraItemActions([
                             Action::make('check_in')
                                 ->label('Check In')
@@ -781,7 +753,46 @@ class ReservationForm
                                     return $rgId ? url("/admin/reservation-guests/{$rgId}/edit") : null;
                                 })
                                 ->openUrlInNewTab(false),
+                            Action::make('hapus_sekarang')
+                                ->label('Hapus (langsung)')
+                                ->icon('heroicon-o-trash')
+                                ->color('danger')
+                                ->requiresConfirmation()
+                                ->modalHeading('Hapus baris ini sekarang?')
+                                ->modalSubheading(function (array $arguments, $livewire) {
+                                    // Ambil ID ReservationGuest dari state Repeater berdasarkan key item
+                                    $itemKey = data_get($arguments, 'item');              // contoh: "record-4" / "item-xyz"
+                                    $rgId    = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
 
+                                    return 'Tindakan ini tidak dapat dibatalkan. ID RG: #' . ($rgId ?: '-');
+                                })
+                                ->action(function (array $arguments, $livewire) {
+                                    $itemKey = data_get($arguments, 'item');
+                                    $rgId    = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
+
+                                    if (! $rgId) {
+                                        Notification::make()
+                                            ->title('Gagal menghapus')
+                                            ->body('ID ReservationGuest tidak ditemukan pada baris ini.')
+                                            ->danger()
+                                            ->send();
+                                        return;
+                                    }
+
+                                    DB::transaction(function () use ($rgId) {
+                                        ReservationGuest::find($rgId)?->delete(); // hard delete, atau soft delete jika model memakai SoftDeletes
+                                    });
+
+                                    // Keluarkan item dari state form juga agar hilang dari UI tanpa reload
+                                    $items = (array) data_get($livewire, 'data.reservationGuests', []);
+                                    unset($items[$itemKey]);
+                                    data_set($livewire, 'data.reservationGuests', $items);
+
+                                    Notification::make()
+                                        ->title("ReservationGuest #{$rgId} dihapus")
+                                        ->success()
+                                        ->send();
+                                }),
                             // Action::make('hapus')
                             //     ->label('Hapus')
                             //     ->icon('heroicon-o-trash')

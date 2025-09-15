@@ -132,27 +132,4 @@ class ValueParsers
         // Tanpa fallback strtotime/epoch → hindari 1970 salah kaprah
         return null;
     }
-
-    /**
-     * Parser boolean fleksibel: 1/0, true/false, yes/no, ya/tidak, on/off, ✓/x
-     */
-    public static function parseBoolFlexible(mixed $value): ?bool
-    {
-        if ($value === null) return null;
-
-        if (is_bool($value)) return $value;
-
-        $v = trim(mb_strtolower((string) $value));
-
-        $truthy = ['1', 'true', 'yes', 'ya', 'y', 'on', '✓', '✔', 'check', 'checked'];
-        $falsy  = ['0', 'false', 'no', 'tidak', 't', 'off', 'x', '✗', '✕'];
-
-        if (in_array($v, $truthy, true)) return true;
-        if (in_array($v, $falsy, true))  return false;
-
-        // angka selain 0 dianggap true
-        if (is_numeric($v)) return ((float)$v) != 0.0;
-
-        return null;
-    }
 }

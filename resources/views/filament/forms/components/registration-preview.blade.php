@@ -388,9 +388,7 @@
                     <div class="reg-row">
                         <div>Length of Stay</div>
                         <div>
-                            @if (!empty($res?->length_of_stay))
-                                {{ $res->length_of_stay }} Night(s)
-                            @elseif(!is_null($nights))
+                            @if (!is_null($nights))
                                 {{ $nights }} Night(s)
                             @else
                                 -

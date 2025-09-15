@@ -26,7 +26,27 @@
         $serviceRp = (float) ($row['service'] ?? 0);
         $extraBedRp = (float) ($row['extra_bed_total'] ?? 0);
         $lateRp = (float) ($row['late_arrival_penalty'] ?? 0);
+
+        // ------ Ambil kandidat tanggal untuk hitung nights ------
+        $inForNights = $row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null));
+        $outForNights = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null));
+
+        // Nights dari data bila disuplai (fallback = 1)
         $nights = (int) max(1, (int) ($row['nights'] ?? 1));
+
+        // Jika punya tanggal in & out yang valid, override nights dengan selisih hari kalender
+        if ($inForNights && $outForNights) {
+            try {
+                // Gunakan startOfDay agar stabil (kamu pakai jam 12:00; selisih hari tetap benar)
+                $nightsDiff = Carbon::parse($inForNights)
+                    ->startOfDay()
+                    ->diffInDays(Carbon::parse($outForNights)->startOfDay());
+                // Minimal 1 malam
+                $nights = max(1, (int) $nightsDiff);
+            } catch (\Throwable $e) {
+                // biarkan nights hasil sebelumnya
+            }
+        }
 
         $finalRatePerNight = ReservationMath::calcFinalRate(
             [
@@ -45,10 +65,14 @@
             ],
         );
 
+        // Amount per baris = final rate per night × nights (sesuai permintaan)
         $amount = $finalRatePerNight * $nights;
+
+        // Karena template ini 1 baris item, total sama dengan amount; tetap siapkan variabel agar mudah multi-baris
+        $totalNights = $nights;
         $subtotal = $amount;
         $tax_total = 0;
-        $total = $subtotal;
+        $total = $subtotal; // jika nanti ada biaya lain, tinggal tambahkan
 
         $breakdown = [
             'basic_rate' => $baseRate,
@@ -160,7 +184,6 @@
             margin: 10px 0;
         }
 
-        /* ===== Items table: anti-wrap + width ketat + font kecil ===== */
         table.items {
             width: 100%;
             border-collapse: collapse;
@@ -185,6 +208,11 @@
             text-overflow: ellipsis;
         }
 
+        .items tfoot td {
+            border-top: 1.5px solid #1F2937;
+            font-weight: 700;
+        }
+
         .center {
             text-align: center;
         }
@@ -197,17 +225,14 @@
             white-space: nowrap;
         }
 
-        /* lebar tetap agar tidak wrap; category dibiarkan lebar */
         .col-room {
             width: 44px;
         }
 
-        /* kecil */
         .col-cat {
             width: auto;
         }
 
-        /* panjang/fleksibel */
         .col-pax {
             width: 36px;
             text-align: center;
@@ -228,19 +253,16 @@
             text-align: center;
         }
 
-        /* cukup untuk d/m H:i */
         .col-out {
             width: 108px;
             text-align: center;
         }
 
-        /* sedikit lebih panjang */
         .col-amount {
             width: 100px;
             text-align: right;
         }
 
-        /* ===== Totals box (kanan) jadi satu tabel (breakdown + subtotal/total) ===== */
         .totals-box-wrap {
             width: 100%;
             margin-top: 12px;
@@ -377,17 +399,24 @@
                 <td class="center nowrap">{{ (int) ($row['ps'] ?? 1) }}</td>
                 <td class="right nowrap">{{ $fmtMoney($finalRatePerNight) }}</td>
                 <td class="center nowrap">{{ $nights }}</td>
-                <td class="center nowrap">{{ $fmtDateShort($row['actual_in'] ?? null) }}</td>
                 <td class="center nowrap">
-                    @if (!empty($row['actual_out']))
-                        {{ $fmtDateShort($row['actual_out']) }}
-                    @else
-                        {{ $fmtDateShort($row['expected_out'] ?? null) }}
-                    @endif
+                    {{ $fmtDateShort($row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null))) }}
+                </td>
+                <td class="center nowrap">
+                    @php $outShown = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null)); @endphp
+                    {{ $fmtDateShort($outShown) }}
                 </td>
                 <td class="right nowrap">{{ $fmtMoney($amount) }}</td>
             </tr>
         </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="4" class="right">TOTAL NIGHTS</td>
+                <td class="center">{{ $totalNights }}</td>
+                <td colspan="2" class="right">TOTAL AMOUNT</td>
+                <td class="right">{{ $fmtMoney($total) }}</td>
+            </tr>
+        </tfoot>
     </table>
 
     {{-- ===== TOTALS BOX (gabung breakdown + totals) ===== --}}
@@ -423,12 +452,18 @@
             </tr>
 
             <tr>
-                <td class="tb-k"><strong>Total</strong></td>
-                <td class="tb-v"><strong>{{ $fmtMoney($breakdown['rate_plus_plus']) }}</strong></td>
+                <td class="tb-k">Rate × Nights</td>
+                <td class="tb-v">{{ $fmtMoney($finalRatePerNight) }} × {{ $totalNights }} =
+                    {{ $fmtMoney($total) }}</td>
             </tr>
 
             <tr class="tb-line">
                 <th colspan="2"></th>
+            </tr>
+
+            <tr class="tb-strong">
+                <td class="tb-k">Grand Total</td>
+                <td class="tb-v">{{ $fmtMoney($total) }}</td>
             </tr>
         </table>
     </div>

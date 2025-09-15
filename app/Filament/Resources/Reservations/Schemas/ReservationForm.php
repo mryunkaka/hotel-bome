@@ -399,26 +399,57 @@ class ReservationForm
                             $data['hotel_id'] = $data['hotel_id']
                                 ?? (Session::get('active_hotel_id') ?? Auth::user()?->hotel_id);
 
-                            // Pax = male + female + children (min 1)
+                            // Pax
                             $male     = (int)($data['male'] ?? 0);
                             $female   = (int)($data['female'] ?? 0);
                             $children = (int)($data['children'] ?? 0);
                             $data['jumlah_orang'] = max(1, $male + $female + $children);
 
-                            // Default waktu
+                            // ====== BACA HEADER & TURUNKAN PERIODE KE BARIS REPEATER ======
+                            $parentArrival   = Arr::get(request()->input(), 'data.expected_arrival');     // date string
+                            $parentDeparture = Arr::get(request()->input(), 'data.expected_departure');   // date string (bisa kosong)
+                            $parentNights    = (int) (Arr::get(request()->input(), 'data.nights') ?? 1);
+
+                            $headerIn  = $parentArrival
+                                ? Carbon::parse($parentArrival)->setTime(12, 0)
+                                : null;
+
+                            // Jika parentDeparture kosong, hitung dari arrival + nights (min 1 malam)
+                            $headerOut = $parentDeparture
+                                ? Carbon::parse($parentDeparture)->setTime(12, 0)
+                                : ($headerIn
+                                    ? $headerIn->copy()->addDays(max(1, $parentNights))->setTime(12, 0)
+                                    : null);
+
+                            // Default-kan checkin/checkout baris mengikuti header
                             if (empty($data['expected_checkin'])) {
-                                $data['expected_checkin'] = now()->setTime(12, 0);
-                            }
-                            if (empty($data['expected_checkout'])) {
-                                $data['expected_checkout'] = Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
+                                $data['expected_checkin'] = $headerIn
+                                    ? $headerIn->copy()
+                                    : now()->setTime(12, 0);
                             }
 
-                            // Rate dari room kalau kosong; fallback 0 agar tidak NULL
+                            if (empty($data['expected_checkout'])) {
+                                $data['expected_checkout'] = $headerOut
+                                    ? $headerOut->copy()
+                                    : Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
+                            }
+
+                            // Pastikan checkout > checkin (minimal +1 hari)
+                            if (
+                                Carbon::parse($data['expected_checkout'])
+                                ->lessThanOrEqualTo(Carbon::parse($data['expected_checkin']))
+                            ) {
+                                $data['expected_checkout'] = Carbon::parse($data['expected_checkin'])
+                                    ->addDay()->setTime(12, 0);
+                            }
+                            // ===============================================================
+
+                            // Tarik room_rate otomatis jika kosong (biarkan seperti semula)
                             if (empty($data['room_rate']) && ! empty($data['room_id'])) {
                                 $price = Room::whereKey($data['room_id'])->value('price');
-                                $data['room_rate'] = (int) ($price ?? 0);
-                            } else {
-                                $data['room_rate'] = (int) ($data['room_rate'] ?? 0);
+                                if ($price !== null) {
+                                    $data['room_rate'] = (int) $price;
+                                }
                             }
 
                             return $data;
@@ -432,11 +463,22 @@ class ReservationForm
                             $children = (int)($data['children'] ?? 0);
                             $data['jumlah_orang'] = max(1, $male + $female + $children);
 
+                            // ✅ ulangi sinkron header di hook save juga
+                            $parentArrival   = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_arrival');
+                            $parentDeparture = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_departure');
+
+                            if (empty($data['expected_checkin']) && $parentArrival) {
+                                $data['expected_checkin'] = \Illuminate\Support\Carbon::parse($parentArrival)->setTime(12, 0);
+                            }
+                            if (empty($data['expected_checkout']) && $parentDeparture) {
+                                $data['expected_checkout'] = \Illuminate\Support\Carbon::parse($parentDeparture)->setTime(12, 0);
+                            }
+
                             if (empty($data['expected_checkin'])) {
                                 $data['expected_checkin'] = now()->setTime(12, 0);
                             }
                             if (empty($data['expected_checkout'])) {
-                                $data['expected_checkout'] = Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
+                                $data['expected_checkout'] = \Illuminate\Support\Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
                             }
 
                             if (empty($data['room_rate']) && ! empty($data['room_id'])) {
@@ -516,7 +558,6 @@ class ReservationForm
                                     ->live()
                                     ->reactive()
                                     ->createOptionForm([
-
                                         Section::make('Guest Info')->schema([
                                             Grid::make(12)->schema([
                                                 // ENUM salutation (sesuai enum & kolom string(10))
@@ -536,8 +577,8 @@ class ReservationForm
                                                 FSelect::make('guest_type')
                                                     ->label('Guest Type')
                                                     ->options([
-                                                        'DOMESTIC' => 'Domestic',
-                                                        'INTERNATIONAL'  => 'International',
+                                                        'DOMESTIC'     => 'Domestic',
+                                                        'INTERNATIONAL' => 'International',
                                                     ])
                                                     ->native(false)
                                                     ->columnSpan(4),
@@ -848,24 +889,6 @@ class ReservationForm
                                     return true; // biarkan terlihat; kita validasi lagi saat action jalan
                                 })
 
-                                // (Opsional) tampilkan info ID target di subheading modal jika kamu pakai confirmation
-                                // ->requiresConfirmation()
-                                // ->modalHeading('Buka halaman Check In?')
-                                // ->modalSubheading(function (array $arguments, $livewire, $record) {
-                                //     $rgId = null;
-                                //     // 1) Jika ini action di dalam Repeater item:
-                                //     if ($itemKey = Arr::get($arguments, 'item')) {
-                                //         $rgId = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
-                                //     }
-                                //     // 2) Fallback dari baris tabel:
-                                //     if (!$rgId && $record instanceof ReservationGuest) $rgId = $record->getKey();
-                                //     if (!$rgId && isset($record->reservation_guest_id)) $rgId = (int) $record->reservation_guest_id;
-                                //     if (!$rgId && method_exists($record, 'reservationGuests')) {
-                                //         $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
-                                //     }
-                                //     return 'ReservationGuest ID: #' . ($rgId ?: '-');
-                                // })
-
                                 ->action(function (array $arguments, $livewire, $record) {
                                     $rgId = null;
 
@@ -898,9 +921,10 @@ class ReservationForm
                                     // BUKA DI TAB BARU (tanpa reload halaman sekarang)
                                     $url = ReservationGuestResource::getUrl('edit', ['record' => $rgId]);
                                     $livewire->js(<<<JS
-            window.open("{$url}", "_blank", "noopener");
-        JS);
+                                        window.open("{$url}", "_blank", "noopener");
+                                    JS);
                                 }),
+
                             Action::make('hapus_sekarang')
                                 ->label('Hapus (langsung)')
                                 ->icon('heroicon-o-trash')
@@ -941,66 +965,6 @@ class ReservationForm
                                         ->success()
                                         ->send();
                                 }),
-                            // Action::make('hapus')
-                            //     ->label('Hapus')
-                            //     ->icon('heroicon-o-trash')
-                            //     ->color('danger')
-                            //     ->requiresConfirmation()
-                            //     ->modalHeading('Hapus data ini?')
-                            //     ->modalSubheading(function ($record) {
-                            //         // --- Resolve ReservationGuest ID persis seperti di check_in ---
-                            //         $rgId = null;
-
-                            //         if ($record instanceof ReservationGuest) {
-                            //             $rgId = $record->getKey();
-                            //         } elseif (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
-                            //             $rgId = (int) $record->reservation_guest_id;
-                            //         } elseif (method_exists($record, 'reservationGuests')) {
-                            //             $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
-                            //         }
-
-                            //         return 'Tindakan ini tidak dapat dibatalkan';
-                            //     })
-                            //     ->action(function ($record, $livewire) {
-                            //         // --- Resolve model ReservationGuest yang akan dihapus ---
-                            //         $rg = null;
-
-                            //         if ($record instanceof ReservationGuest) {
-                            //             $rg = $record;
-                            //         } elseif (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
-                            //             $rg = ReservationGuest::find($record->reservation_guest_id);
-                            //         } elseif (method_exists($record, 'reservationGuests')) {
-                            //             $rg = $record->reservationGuests()->latest('id')->first();
-                            //         }
-
-                            //         if (!$rg) {
-                            //             Notification::make()
-                            //                 ->title('Tidak menemukan ReservationGuest pada baris ini.')
-                            //                 ->danger()
-                            //                 ->send();
-                            //             return;
-                            //         }
-
-                            //         $rgId = $rg->getKey();
-
-                            //         try {
-                            //             DB::transaction(fn() => $rg->delete());
-
-                            //             Notification::make()
-                            //                 ->title('ReservationGuest #' . $rgId . ' berhasil dihapus')
-                            //                 ->success()
-                            //                 ->send();
-
-                            //             // refresh tabel supaya baris hilang
-                            //             $livewire->dispatch('refresh');
-                            //         } catch (\Throwable $e) {
-                            //             Notification::make()
-                            //                 ->title('Gagal menghapus #' . $rgId)
-                            //                 ->body(config('app.debug') ? $e->getMessage() : 'Terjadi kesalahan saat menghapus data.')
-                            //                 ->danger()
-                            //                 ->send();
-                            //         }
-                            //     }),
                         ]),
                 ])
                 ->columnSpanFull(),

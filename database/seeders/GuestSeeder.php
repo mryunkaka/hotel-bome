@@ -15,14 +15,14 @@ class GuestSeeder extends Seeder
         // fallback hotel_id = 1 untuk seeder
         $hotelId = 1;
 
-        for ($i = 0; $i < 100; $i++) {
+        for ($i = 0; $i < 20; $i++) {
             Guest::create([
                 'hotel_id'     => $hotelId,
 
                 // identitas dasar
-                'name'        => $faker->name,
                 'salutation'  => $faker->randomElement(['MR', 'MRS', 'MISS']),
-                'guest_type'  => $faker->randomElement(['DOMESTIC', 'INTERNATIONAL']), // ✅ update
+                'name'        => $faker->name,
+                'guest_type'  => $faker->randomElement(['DOMESTIC', 'INTERNATIONAL']),
                 'nationality' => $faker->randomElement(['Indonesia', 'Malaysia', 'Singapore', 'Japan', 'Australia']),
 
                 // kontak & alamat
@@ -32,15 +32,15 @@ class GuestSeeder extends Seeder
                 'email'       => $faker->unique()->safeEmail,
                 'phone'       => $faker->unique()->phoneNumber,
 
-                // identitas
-                'id_type'      => $faker->randomElement(['KTP', 'PASSPORT', 'SIM']),
+                // identitas resmi
+                'id_type'      => $faker->randomElement(['Passport', 'National ID', 'Driver License']),
                 'id_card'      => $faker->numerify('###########'),
-                'id_card_file' => null, // dummy, bisa isi 'guests/id/dummy.pdf'
+                'id_card_file' => null,
 
                 // tempat & tanggal
                 'birth_place'  => $faker->city,
                 'birth_date'   => $faker->optional()->date(),
-                'issued_place' => $faker->city,   // ✅ string (bukan date)
+                'issued_place' => $faker->city,
                 'issued_date'  => $faker->optional()->date(),
 
                 // keluarga

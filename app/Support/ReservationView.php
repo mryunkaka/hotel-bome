@@ -121,7 +121,6 @@ final class ReservationView
     {
         $activeHotelId = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? ($hotel->id ?? null);
 
-        // room_no -> room_id
         try {
             $roomIdByNo = $activeHotelId
                 ? Room::where('hotel_id', $activeHotelId)->pluck('id', 'room_no')->toArray()
@@ -130,12 +129,33 @@ final class ReservationView
             $roomIdByNo = [];
         }
 
-        // prepare once to allow closure capturing by reference
         $taxLookup = [];
 
         $enrich = function ($row) use (&$taxLookup, $roomIdByNo, $activeHotelId) {
             $r = is_array($row) ? $row : (array) $row;
 
+            // ===== Nights auto-calc jika belum ada =====
+            $in  = $r['actual_in']  ?? $r['expected_in']  ?? $r['expected_checkin']  ?? null;
+            $out = $r['actual_out'] ?? $r['expected_out'] ?? $r['expected_checkout'] ?? null;
+
+            if (!isset($r['nights']) || (int)$r['nights'] <= 0) {
+                if ($in && $out) {
+                    try {
+                        $r['nights'] = max(
+                            1,
+                            (int) Carbon::parse($in)->startOfDay()->diffInDays(
+                                Carbon::parse($out)->startOfDay()
+                            )
+                        );
+                    } catch (\Throwable $e) {
+                        $r['nights'] = 1;
+                    }
+                } else {
+                    $r['nights'] = 1;
+                }
+            }
+
+            // ===== (sisanya tetap seperti versi kamu) =====
             $needDisc    = !array_key_exists('discount_percent', $r);
             $needTaxId   = !array_key_exists('id_tax', $r) && !array_key_exists('tax_percent', $r) && !array_key_exists('tax', $r);
             $needExtra   = !array_key_exists('extra_bed', $r);
@@ -199,7 +219,6 @@ final class ReservationView
         }
         unset($row);
 
-        // return both rows & taxLookup merged (so caller can ensure)
         return [$rows, $taxLookup];
     }
 

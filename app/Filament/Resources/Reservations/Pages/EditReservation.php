@@ -28,6 +28,9 @@ class EditReservation extends EditRecord
     protected function afterSave(): void
     {
         $this->purgeGuestsIfRepeaterEmpty();
+
+        // Paksa ulang semua ReservationGuest mengikuti header
+        $this->syncGuestsCheckinCheckoutFromHeader();
     }
 
     private function purgeGuestsIfRepeaterEmpty(): void
@@ -83,7 +86,7 @@ class EditReservation extends EditRecord
             ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
             : null;
 
-        // ✅ PERBAIKAN: kalau expected_departure kosong, hitung dari arrival + nights (bukan +1 hari tetap)
+        // ✅ Jika expected_departure kosong, hitung dari arrival + nights
         $headerOut = !empty($data['expected_departure'])
             ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
             : ($headerIn
@@ -108,7 +111,7 @@ class EditReservation extends EditRecord
                 // ====================================================================
 
                 // ================== Periode per-guest via MUTATE ==================
-                // Tetap override dari header
+                // Tetap override dari header (AUTO): expected_checkin & expected_checkout
                 if ($headerIn) {
                     $row['expected_checkin'] = $headerIn->copy();
                 } else {
@@ -154,11 +157,9 @@ class EditReservation extends EditRecord
         return $data;
     }
 
-
-    // Nilai default saat membuka form edit (untuk UI saja)
     protected function mutateFormDataBeforeFill(array $data): array
     {
-        // Default nights
+        // Default nights (UI only)
         if (empty($data['nights'])) {
             if (!empty($data['expected_arrival']) && !empty($data['expected_departure'])) {
                 $data['nights'] = Carbon::parse($data['expected_arrival'])
@@ -184,7 +185,7 @@ class EditReservation extends EditRecord
                 ->label('Print')
                 ->icon('heroicon-m-printer')
                 ->url(fn() => route('reservations.print', [
-                    'reservation' => $this->record,   // ← WAJIB pakai key param
+                    'reservation' => $this->record,
                 ]))
                 ->openUrlInNewTab(),
 
@@ -192,5 +193,31 @@ class EditReservation extends EditRecord
             ForceDeleteAction::make(),
             RestoreAction::make(),
         ];
+    }
+
+    // Paksa ulang semua child sesudah save → checkout = departure (header)
+    private function syncGuestsCheckinCheckoutFromHeader(): void
+    {
+        $reservation = $this->record;
+
+        $in  = $reservation->expected_arrival
+            ? Carbon::parse($reservation->expected_arrival)->setTime(12, 0)
+            : null;
+
+        $out = $reservation->expected_departure
+            ? Carbon::parse($reservation->expected_departure)->setTime(12, 0)
+            : null;
+
+        $payload = [];
+        if ($in) {
+            $payload['expected_checkin']  = $in;
+        }
+        if ($out) {
+            $payload['expected_checkout'] = $out;
+        }
+
+        if (! empty($payload)) {
+            $reservation->reservationGuests()->update($payload);
+        }
     }
 }

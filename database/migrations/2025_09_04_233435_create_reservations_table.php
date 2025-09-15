@@ -13,8 +13,12 @@ return new class extends Migration
 
             // Scope hotel (wajib)
             $table->foreignId('hotel_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('group_id')->nullable()
-                ->constrained('reservation_groups')->nullOnDelete();
+
+            // Relasi opsional
+            $table->foreignId('group_id')
+                ->nullable()
+                ->constrained('reservation_groups')
+                ->nullOnDelete();
 
             $table->foreignId('guest_id')
                 ->nullable()
@@ -22,17 +26,19 @@ return new class extends Migration
                 ->nullOnDelete();
 
             // Identitas reservasi
-            $table->string('reservation_no', 30)->nullable()->unique(); // ex: HOTEL-RESV250900001
+            $table->string('reservation_no', 30)
+                ->nullable()
+                ->unique(); // contoh: HOTEL-RESV250900001
 
             $table->string('option', 20)->nullable();
             $table->string('method', 20)->nullable()->index();
             $table->string('status', 20)->default('CONFIRM');
 
-            // Perkiraan jadwal global (dipakai sebagai default untuk detail)
+            // Perkiraan jadwal global (default untuk detail)
             $table->dateTime('expected_arrival')->nullable();
             $table->dateTime('expected_departure')->nullable();
 
-            // (Opsional) Realisasi global
+            // Realisasi global
             $table->dateTime('checkin_date')->nullable();
             $table->dateTime('checkout_date')->nullable();
 
@@ -42,20 +48,25 @@ return new class extends Migration
 
             // Identitas pemesan (bukan tamu utama)
             $table->string('reserved_title', 10)->nullable(); // MR/MRS/MS, dll.
-            $table->string('reserved_by')->nullable();
-            $table->string('reserved_number')->nullable();
-            $table->string('reserved_by_type', 10)->default('GUEST')->index(); // GUEST/COMPANY/AGENCY/...
+            $table->string('reserved_by')->nullable();        // nama/instansi
+            $table->string('reserved_number')->nullable();    // no. telp/hp
+            $table->string('reserved_by_type', 10)->default('GUEST')->index(); // GUEST/GROUP/COMPANY/AGENCY/...
             $table->dateTime('entry_date')->nullable();
 
             // Lain-lain
             $table->unsignedTinyInteger('num_guests')->default(1);
             $table->string('card_uid')->nullable();
-            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+
+            // Audit
+            $table->foreignId('created_by')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
 
             $table->timestamps();
             $table->softDeletes();
 
-            // Index yang sering dipakai filter
+            // Index tambahan
             $table->index(['hotel_id', 'expected_departure']);
             $table->index(['hotel_id', 'expected_arrival']);
             $table->index(['hotel_id', 'group_id']);

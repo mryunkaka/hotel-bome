@@ -14,6 +14,7 @@ class InvoiceItem extends Model
 {
     protected $fillable = [
         'invoice_id',
+        'reservation_guest_id', // <— NEW
         'item_name',
         'description',
         'qty',
@@ -30,6 +31,11 @@ class InvoiceItem extends Model
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    public function reservationGuest(): BelongsTo // <— NEW
+    {
+        return $this->belongsTo(ReservationGuest::class, 'reservation_guest_id');
     }
 
     protected static function booted(): void

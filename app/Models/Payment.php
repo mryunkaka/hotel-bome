@@ -9,6 +9,7 @@ class Payment extends Model
 {
     protected $fillable = [
         'reservation_id',
+        'reservation_guest_id',
         'hotel_id',
         'amount',
         'method',
@@ -30,6 +31,11 @@ class Payment extends Model
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);
+    }
+
+    public function reservationGuest(): BelongsTo // <— NEW
+    {
+        return $this->belongsTo(ReservationGuest::class, 'reservation_guest_id');
     }
 
     public function createdBy(): BelongsTo

@@ -15,6 +15,8 @@ use App\Models\AccountLedger;
 use Illuminate\Support\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\ReservationGuest;
+use App\Support\ReservationMath;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Storage;
@@ -22,37 +24,103 @@ use Illuminate\Support\Facades\Storage;
 Route::redirect('/', '/admin');
 
 Route::post('/admin/reservation-guests/{guest}/checkin', function (Request $request, ReservationGuest $guest) {
-    // idempotent: hanya set jika belum terisi
-    if (blank($guest->actual_checkin)) {
-        $guest->forceFill(['actual_checkin' => now()])->save();
-        // flash untuk notifikasi di Blade
-        return back()->with('flash_success', sprintf(
-            'Checked-in ReservationGuest #%d pada %s',
-            $guest->id,
-            now()->format('d/m/Y H:i')
-        ));
+    // ===== Muat relasi yang dibutuhkan =====
+    $guest->loadMissing([
+        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,deposit,created_at,entry_date,reserved_by_type,guest_id',
+        'reservation.creator:id,name',
+        'reservation.group:id,name,address,city,phone,handphone,fax,email',
+        'reservation.guest:id,name,salutation,address,city,phone,email',
+        'room:id,room_no,type,price',
+        'guest:id,name',
+        'tax:id,percent',
+    ]);
+
+    // ===== Validasi minimal =====
+    abort_if(!$guest->reservation, 404, 'Reservation tidak ditemukan untuk RG ini.');
+
+    // ===== (Opsional) Hotel aktif =====
+    $hid   = (int) (session('active_hotel_id') ?? ($guest->reservation->hotel_id ?? 0));
+    $hotel = $hid ? Hotel::find($hid) : null;
+
+    // ===== Parameter hitung =====
+    $tz       = 'Asia/Makassar';
+    $rate     = (float) ($guest->room_rate ?? $guest->room?->price ?? 0);
+    $expected = $guest->reservation->expected_arrival;
+
+    // BATAS HITUNG = actual_checkin RG (kalau belum ada, pakai timestamp yang AKAN diset sekarang)
+    $actualCandidate = $guest->actual_checkin ?: \Illuminate\Support\Carbon::now();
+
+    // Hitung penalty expected vs actual_checkin (BUKAN now())
+    $pen = \App\Support\ReservationMath::latePenalty(
+        $expected,
+        $actualCandidate,
+        $rate,
+        ['tz' => $tz]
+    );
+    $penaltyHours = (int) ($pen['hours'] ?? 0);
+    $penaltyRp    = (int) ($pen['amount'] ?? 0);
+
+    if ($request->boolean('debug')) {
+        $rawExpected = optional($guest->reservation)->getAttributes()['expected_arrival'] ?? $expected;
+        return response()->json([
+            'guest_id'                 => $guest->id,
+            'reservation_id'           => $guest->reservation->id,
+            'tz'                       => $tz,
+            'now_tz'                   => \Illuminate\Support\Carbon::now($tz)->toDateTimeString(),
+            'expected_arrival_raw'     => $rawExpected,
+            'expected_arrival_casted'  => $expected instanceof \Illuminate\Support\Carbon
+                ? $expected->copy()->timezone($tz)->toDateTimeString()
+                : ($rawExpected ? \Illuminate\Support\Carbon::parse($rawExpected, $tz)->toDateTimeString() : null),
+            'rate'                     => $rate,
+            'actual_checkin_used'      => $actualCandidate instanceof \Illuminate\Support\Carbon
+                ? $actualCandidate->copy()->timezone($tz)->toDateTimeString()
+                : \Illuminate\Support\Carbon::parse($actualCandidate, $tz)->toDateTimeString(),
+            'penalty_per_hour'         => \App\Support\ReservationMath::LATE_PENALTY_PER_HOUR,
+            'max_percent_cap'          => \App\Support\ReservationMath::LATE_PENALTY_MAX_PERCENT_OF_BASE,
+            'penalty_calc'             => $pen,
+        ]);
     }
 
-    return back()->with('flash_info', sprintf(
-        'ReservationGuest #%d sudah check-in pada %s',
-        $guest->id,
-        \Illuminate\Support\Carbon::parse($guest->actual_checkin)->format('d/m/Y H:i')
-    ));
-})->name('reservation-guests.checkin')->middleware(['web', 'auth']);
+    // Simpan actual_checkin hanya jika belum ada (idempotent), TIDAK menyimpan penalty (sesuai permintaan)
+    \Illuminate\Support\Facades\DB::transaction(function () use ($guest, $actualCandidate) {
+        if (blank($guest->actual_checkin)) {
+            $guest->actual_checkin = $actualCandidate;
+            $guest->save();
+        }
+    });
 
+    // Flash & redirect
+    $msg = sprintf(
+        'Check-in #%d sukses. Keterlambatan: %d jam → Rp %s (expected %s, actual %s, rate Rp %s).',
+        $guest->id,
+        $penaltyHours,
+        number_format($penaltyRp, 0, ',', '.'),
+        $expected ? \Illuminate\Support\Carbon::parse($expected, $tz)->format('d/m/Y H:i') : '-',
+        ($actualCandidate instanceof \Illuminate\Support\Carbon
+            ? $actualCandidate->copy()->timezone($tz)->format('d/m/Y H:i')
+            : \Illuminate\Support\Carbon::parse($actualCandidate, $tz)->format('d/m/Y H:i')),
+        number_format($rate, 0, ',', '.')
+    );
+
+    if ($request->boolean('print')) {
+        return redirect()
+            ->route('reservation-guests.print', ['guest' => $guest->id])
+            ->with('flash_success', $msg);
+    }
+
+    return back()->with('flash_success', $msg);
+})->name('reservation-guests.checkin')->middleware(['web', 'auth']);
 Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest $guest) {
-    // ===== Validasi minimal: harus punya reservation =====
     $reservation = $guest->reservation()->with([
         'guest:id,name,salutation,address,city,phone,email',
         'group:id,name,address,city,phone,handphone,fax,email',
         'creator:id,name',
     ])->firstOrFail();
 
-    // ===== Hotel aktif (dari session atau dari record) =====
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = Hotel::find($hid);
 
-    // ===== Eager load untuk RG terkait =====
+    // Penting: muat relasi tax supaya bisa fallback percent
     $guest->loadMissing([
         'guest:id,name,salutation,city,phone,email,address',
         'room:id,room_no,type,price',
@@ -60,9 +128,10 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'reservation.creator:id,name',
         'reservation.group:id,name,address,city,phone,handphone,fax,email',
         'reservation.guest:id,name,salutation,address,city,phone,email',
+        'tax:id,percent',
     ]);
 
-    // ===== Logo ke base64 =====
+    // Logo (tetap)
     $logoData = null;
     if (function_exists('buildPdfLogoData')) {
         $logoData = buildPdfLogoData($hotel?->logo ?? null);
@@ -80,12 +149,10 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         }
     }
 
-    // ===== Orientasi kertas via ?o=portrait|landscape =====
     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
         ? strtolower(request('o', 'portrait'))
         : 'portrait';
 
-    // ===== Penentuan pihak pemesan (sama seperti reservasi) =====
     $type = strtoupper(trim((string) ($reservation->reserved_by_type ?? 'GUEST')));
 
     $companyName = null;
@@ -120,22 +187,28 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         $fax = null;
     }
 
-    // ===== Validasi hanya boleh print kalau sudah actual_checkin =====
+    // Wajib sudah actual_checkin
     abort_if(blank($guest->actual_checkin), 403, 'Belum check-in.');
 
-    // ===== Kalkulasi slip (nota check-in) =====
+    // Nights
     $actualIn  = $guest->actual_checkin;
-    $actualOut = $guest->actual_checkout ?: $guest->expected_checkout; // fallback ke expected bila checkout belum diisi
-    $nights    = ($actualIn && $actualOut)
-        ? max(1, Carbon::parse($actualIn)->startOfMinute()->diffInDays(Carbon::parse($actualOut)->startOfMinute()))
+    $actualOut = $guest->actual_checkout ?: $guest->expected_checkout;
+    $nights = ($actualIn && $actualOut)
+        ? max(1, Carbon::parse($actualIn)->startOfDay()->diffInDays(Carbon::parse($actualOut)->startOfDay()))
         : 1;
 
     $rate      = (float) ($guest->room_rate ?? $guest->room?->price ?? 0);
     $pax       = (int) ($guest->jumlah_orang ?? max(1, (int)$guest->male + (int)$guest->female + (int)$guest->children));
-    $subtotal  = $rate * $nights;
 
-    // contoh pajak/servis = 0 (sesuaikan nanti bila ada rules)
-    $tax_total = 0.0;
+    // ==== INI YANG DITAMBAHKAN KE ROW ====
+    $discountPercent = (float) ($guest->discount_percent ?? 0);
+    $taxPercent      = (float) ($guest->tax_percent ?? ($guest->tax?->percent ?? 0));
+    $serviceRp       = (float) ($guest->service ?? 0);
+    $extraBedRp      = (float) ($guest->extra_bed_total ?? 0);
+    $idTax           = $guest->id_tax ?? null;
+
+    $subtotal  = $rate * $nights;
+    $tax_total = 0.0; // (box lama masih 0; perhitungan detail dilakukan di Blade)
     $total     = $subtotal + $tax_total;
 
     $clerkName = $reservation->creator?->name;
@@ -164,7 +237,7 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
 
         'billTo'      => $billTo,
 
-        // Baris tunggal (RG ini saja)
+        // Baris tunggal (RG ini saja) + FIELD TAMBAHAN
         'row'         => [
             'room_no'       => $guest->room?->room_no ?: ('#' . $guest->room_id),
             'category'      => $guest->room?->type ?: '-',
@@ -175,6 +248,13 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
             'actual_in'     => $actualIn,
             'actual_out'    => $guest->actual_checkout,
             'expected_out'  => $guest->expected_checkout,
+
+            // === Tambahan agar Blade tidak 0 semua ===
+            'discount_percent' => $discountPercent,
+            'tax_percent'      => $taxPercent,
+            'service'          => $serviceRp,
+            'extra_bed_total'  => $extraBedRp,
+            'id_tax'           => $idTax,
         ],
 
         'subtotal'    => $subtotal,
@@ -184,6 +264,9 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'notes'       => $reservation->remarks ?? null,
         'footerText'  => 'Printed by ' . ($clerkName ?? 'System'),
         'showSignature' => true,
+
+        // kirim juga objek reservation jika Blade ingin akses expected_arrival
+        'reservation' => $reservation,
     ];
 
     if (request()->boolean('html')) {

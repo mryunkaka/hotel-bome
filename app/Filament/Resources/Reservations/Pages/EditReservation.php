@@ -29,6 +29,9 @@ class EditReservation extends EditRecord
     {
         $this->purgeGuestsIfRepeaterEmpty();
 
+        // pastikan ambil nilai TERBARU dari DB
+        $this->record->refresh();
+
         // Paksa ulang semua ReservationGuest mengikuti header
         $this->syncGuestsCheckinCheckoutFromHeader();
     }
@@ -83,14 +86,13 @@ class EditReservation extends EditRecord
 
         // ========= Referensi header untuk periode per-guest =========
         $headerIn  = !empty($data['expected_arrival'])
-            ? Carbon::parse($data['expected_arrival'])->setTime(12, 0)
+            ? Carbon::parse($data['expected_arrival']) // PERTAHANKAN JAM HEADER
             : null;
 
-        // ✅ Jika expected_departure kosong, hitung dari arrival + nights
         $headerOut = !empty($data['expected_departure'])
-            ? Carbon::parse($data['expected_departure'])->setTime(12, 0)
+            ? Carbon::parse($data['expected_departure']) // PERTAHANKAN JAM HEADER
             : ($headerIn
-                ? $headerIn->copy()->addDays(max(1, (int) ($data['nights'] ?? 1)))->setTime(12, 0)
+                ? $headerIn->copy()->addDays(max(1, (int) ($data['nights'] ?? 1)))
                 : null);
 
         // === Sinkron data repeater reservationGuests (tanpa live/hook) ===
@@ -113,24 +115,20 @@ class EditReservation extends EditRecord
                 // ================== Periode per-guest via MUTATE ==================
                 // Tetap override dari header (AUTO): expected_checkin & expected_checkout
                 if ($headerIn) {
-                    $row['expected_checkin'] = $headerIn->copy();
+                    $row['expected_checkin'] = $headerIn->copy();   // sama persis dgn header
                 } else {
-                    $row['expected_checkin'] = now()->setTime(12, 0);
+                    $row['expected_checkin'] = now();               // tanpa paksa 12:00
                 }
 
                 if ($headerOut) {
-                    $row['expected_checkout'] = $headerOut->copy();
+                    $row['expected_checkout'] = $headerOut->copy(); // sama persis dgn header
                 } else {
-                    // fallback terakhir: +1 hari dari checkin
-                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
+                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->copy()->addDay();
                 }
 
-                // Pastikan checkout > checkin (minimal +1 hari)
-                if (
-                    Carbon::parse($row['expected_checkout'])
-                    ->lessThanOrEqualTo(Carbon::parse($row['expected_checkin']))
-                ) {
-                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->addDay()->setTime(12, 0);
+                // Jamin checkout > checkin, tapi TANPA setTime(12:00)
+                if (Carbon::parse($row['expected_checkout'])->lessThanOrEqualTo(Carbon::parse($row['expected_checkin']))) {
+                    $row['expected_checkout'] = Carbon::parse($row['expected_checkin'])->copy()->addDay();
                 }
                 // ===================================================================
 
@@ -198,26 +196,25 @@ class EditReservation extends EditRecord
     // Paksa ulang semua child sesudah save → checkout = departure (header)
     private function syncGuestsCheckinCheckoutFromHeader(): void
     {
-        $reservation = $this->record;
+        $reservation = $this->record; // sudah di-refresh di afterSave()
 
         $in  = $reservation->expected_arrival
-            ? Carbon::parse($reservation->expected_arrival)->setTime(12, 0)
+            ? Carbon::parse($reservation->expected_arrival)   // PERTAHANKAN JAM
             : null;
 
         $out = $reservation->expected_departure
-            ? Carbon::parse($reservation->expected_departure)->setTime(12, 0)
+            ? Carbon::parse($reservation->expected_departure) // PERTAHANKAN JAM
             : null;
 
         $payload = [];
-        if ($in) {
-            $payload['expected_checkin']  = $in;
-        }
-        if ($out) {
-            $payload['expected_checkout'] = $out;
-        }
+        if ($in)  $payload['expected_checkin']  = $in;
+        if ($out) $payload['expected_checkout'] = $out;
 
         if (! empty($payload)) {
-            $reservation->reservationGuests()->update($payload);
+            // Opsional: hanya update yang BELUM check-in aktual
+            $reservation->reservationGuests()
+                // ->whereNull('actual_checkin')   // uncomment kalau mau aman
+                ->update($payload);
         }
     }
 }

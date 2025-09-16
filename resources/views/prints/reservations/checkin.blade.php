@@ -7,75 +7,99 @@
         use Illuminate\Support\Carbon;
         use App\Support\ReservationMath;
 
+        // ===== Paper & orientation =====
         $paper = strtoupper($paper ?? 'A4');
         $orientation = in_array(strtolower($orientation ?? 'portrait'), ['portrait', 'landscape'], true)
             ? strtolower($orientation)
             : 'portrait';
 
+        // ===== Helpers tampilan =====
         $fmtMoney = fn($v) => 'Rp ' . number_format((float) $v, 0, ',', '.');
         $fmtDateShort = fn($v) => $v ? Carbon::parse($v)->format('d/m H:i') : '-';
         $fmtDateFull = fn($v) => $v ? Carbon::parse($v)->format('d/m/Y H:i') : '-';
 
+        // Data hotel kanan-atas
         $hotelRight = array_filter([$hotel?->name, $hotel?->address, $hotel?->city, $hotel?->phone, $hotel?->email]);
 
-        // ====== RATE ======
-        $baseRate = (float) ($row['rate'] ?? 0);
+        // ===== Input utama dari ROUTE (jangan pakai $getRecord di print) =====
+        $row = $row ?? [];
+        $rate = (float) ($row['rate'] ?? ($row['room_rate'] ?? 0));
         $discPct = (float) ($row['discount_percent'] ?? 0);
         $taxPct = (float) ($row['tax_percent'] ?? 0);
-        $serviceRp = (float) ($row['service'] ?? 0);
-        $extraBedRp = (float) ($row['extra_bed_total'] ?? 0);
-        $lateRp = (float) ($row['late_arrival_penalty'] ?? 0);
+        $serviceRp = (int) ($row['service'] ?? 0);
+        $extraBedRp = (int) ($row['extra_bed_total'] ?? 0);
+        $tz = 'Asia/Makassar';
 
-        // Tanggal untuk hitung nights
-        $inForNights = $row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null));
-        $outForNights = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null));
+        // ===== Nights: actual_in → (actual_out | expected_out) =====
+        $actualIn = $row['actual_in'] ?? null;
+        $actualOut = $row['actual_out'] ?? null;
+        $expectedOut = $row['expected_out'] ?? null;
 
-        // Nights dari data (fallback = 1)
-        $nights = (int) max(1, (int) ($row['nights'] ?? 1));
-
-        // Override dari selisih hari kalender bila in/out valid
-        if ($inForNights && $outForNights) {
-            try {
-                $nightsDiff = Carbon::parse($inForNights)
-                    ->startOfDay()
-                    ->diffInDays(Carbon::parse($outForNights)->startOfDay());
-                $nights = max(1, (int) $nightsDiff);
-            } catch (\Throwable $e) {
-            }
+        if ($actualIn && ($actualOut || $expectedOut)) {
+            $in = Carbon::parse($actualIn)->startOfDay();
+            $out = Carbon::parse($actualOut ?: $expectedOut)->startOfDay();
+            $nights = max(1, $in->diffInDays($out));
+        } else {
+            $nights = max(1, (int) ($row['nights'] ?? 1));
         }
+        $__nights = max(1, (int) $nights); // guard
 
-        $finalRatePerNight = ReservationMath::calcFinalRate(
-            [
-                'rate' => $baseRate,
-                'discount_percent' => $discPct,
-                'tax_percent' => $taxPct,
-                'service' => $serviceRp,
-                'extra_bed_total' => $extraBedRp,
-                'late_arrival_penalty' => $lateRp,
-                'id_tax' => $row['id_tax'] ?? null,
-            ],
-            [
-                'tax_lookup' => $taxLookup ?? [],
-                'service_taxable' => false,
-                'rounding' => 0,
-            ],
+        // ===== Ambil Reservation utk expected_arrival via $invoiceId (fallback jika perlu) =====
+        $resvObj = isset($reservation)
+            ? $reservation
+            : (isset($invoiceId)
+                ? \App\Models\Reservation::find($invoiceId)
+                : null);
+
+        $expectedArrival = $resvObj?->expected_arrival ?? ($row['expected_checkin'] ?? ($row['expected_in'] ?? null));
+
+        // ===== Penalty: expected_arrival vs RG.actual_checkin (BUKAN now) =====
+        $pen = ReservationMath::latePenalty(
+            $expectedArrival,
+            $actualIn ?: null, // normalnya sudah ada saat print
+            $rate,
+            ['tz' => $tz],
         );
+        $penaltyHours = (int) ($pen['hours'] ?? 0);
+        $lateRp = (int) ($pen['amount'] ?? 0);
 
-        // Amount = rate per night × nights
-        $amount = $finalRatePerNight * $nights;
-        $totalNights = $nights;
-        $subtotal = $amount;
-        $tax_total = 0;
-        $total = $subtotal;
+        // ===== Diskon pada basic rate (per malam) =====
+        $basicDiscountAmount = round(($rate * $discPct) / 100);
+        $basicRateDisc = max(0, $rate - $basicDiscountAmount); // rate setelah diskon (per malam)
+        $rateAfterDiscPerNight = $basicRateDisc;
+        $rateAfterDiscTimesNights = $rateAfterDiscPerNight * $__nights;
+
+        // ===== Amount kamar untuk kolom "Rate × Nights" (tetap basic) =====
+        $subtotalBase = $rate * $__nights;
+
+        // ===== SUBTOTAL sebelum pajak: (rate disc × nights) + service + extra + penalty =====
+        $subtotalBeforeTax = max(0.0, $rateAfterDiscTimesNights + $serviceRp + $extraBedRp + $lateRp);
+
+        // ===== Pajak persen di atas subtotal (penalty ikut kena pajak) =====
+        $taxVal = $taxPct > 0 ? round(($subtotalBeforeTax * $taxPct) / 100) : 0;
+
+        // ===== Grand total =====
+        $grandTotal = $subtotalBeforeTax + $taxVal;
+
+        // ===== Nilai untuk template (pertahankan variabel lama) =====
+        $finalRatePerNight = $rate; // tampil per malam (basic)
+        $amount = $subtotalBase; // kolom Amount = room charge (basic × nights)
+        $totalNights = $__nights;
+        $subtotal = $subtotalBeforeTax;
+        $tax_total = $taxVal;
+        $total = $grandTotal;
 
         $breakdown = [
-            'basic_rate' => $baseRate,
+            // 'basic_rate' => $rate, // aktifkan bila ingin tampilkan baris Basic Rate
             'room_discount_percent' => $discPct,
             'room_tax_percent' => $taxPct,
             'service_rp' => $serviceRp,
             'extra_bed_rp' => $extraBedRp,
             'late_arrival_penalty_rp' => $lateRp,
             'rate_plus_plus' => $finalRatePerNight,
+            // tambahan agar bisa ditampilkan jika perlu:
+            'rate_after_disc_per_night' => $rateAfterDiscPerNight,
+            'rate_after_disc_times_nights' => $rateAfterDiscTimesNights,
         ];
     @endphp
 
@@ -149,42 +173,78 @@
             line-height: 1.3;
         }
 
-        .kv {
+        /* PERBAIKAN: Tabel informasi atas dengan layout yang lebih rapi */
+
+        .info-table {
             width: 100%;
             border-collapse: collapse;
-            margin: 6px 0;
             table-layout: fixed;
+            /* stabil */
             font-size: 10px;
+            margin: 6px 0 2px;
         }
 
-        .kv col.kcol {
-            width: 90px;
+        /* Lebar total A4: 210mm, margin @page 10mm kiri/kanan -> area konten 190mm
+     Bagi rata:  LBL 28mm | ":" 3mm | VAL 60mm | SP 6mm | LBL-R 32mm | ":" 3mm | VAL-R 58mm = 190mm */
+        .w-lbl {
+            width: 28mm;
         }
 
-        .kv col.vcol {
-            width: 180px;
+        .w-colon {
+            width: 3mm;
+            text-align: center;
         }
 
-        .kv td {
+        .w-val {
+            width: 60mm;
+        }
+
+        .w-sp {
+            width: 6mm;
+        }
+
+        .w-lblr {
+            width: 32mm;
+        }
+
+        .w-valr {
+            width: 58mm;
+        }
+
+        .info-table td {
             padding: 2px 0;
             vertical-align: top;
         }
 
-        .kv .k {
+        .info-label {
             color: #374151;
-            position: relative;
+            font-weight: 600;
+            white-space: nowrap;
+            /* label jangan pecah */
+            word-break: normal;
+            /* cegah pecah per huruf */
+            hyphens: manual;
+            /* aman di DomPDF */
         }
 
-        .kv .k::after {
-            content: ':';
-            margin-left: 2px;
-        }
-
-        .kv .v {
+        .info-value {
             color: #111827;
             font-weight: 600;
+            white-space: nowrap;
+            /* MINTA: tetap 1 baris */
+            /* ellipsis kurang didukung DomPDF; biarkan terpotong natural */
             overflow: hidden;
-            text-overflow: ellipsis;
+            /* di DomPDF sering diabaikan, tapi tetap aman */
+        }
+
+        .row-tight {
+            height: 16px;
+        }
+
+        /* sesuaikan kebutuhan */
+
+        .info-spacer {
+            width: 40px;
         }
 
         .line {
@@ -378,32 +438,45 @@
         </tr>
     </table>
 
-    {{-- ===== INFO ATAS ===== --}}
-    <table class="kv">
-        <colgroup>
-            <col class="kcol">
-            <col class="vcol">
-            <col class="kcol">
-            <col class="vcol">
-        </colgroup>
-        <tr>
-            <td class="k">Status</td>
-            <td class="v">{{ strtoupper($status ?? 'CONFIRM') }}</td>
-            <td class="k">Payment Method</td>
-            <td class="v">{{ ucfirst($payment['method'] ?? 'personal') }}</td>
-        </tr>
-        <tr>
-            <td class="k">Reserved By</td>
-            <td class="v">{{ $companyName ?: '-' }}</td>
-            <td class="k">Entry Date</td>
-            <td class="v">{{ $fmtDateFull($issuedAt ?? ($generatedAt ?? now())) }}</td>
-        </tr>
-        <tr>
-            <td class="k">Guest Name</td>
-            <td class="v">{{ $row['guest_display'] ?? '-' }}</td>
-            <td class="k">Clerk</td>
-            <td class="v">{{ $clerkName ?? '-' }}</td>
-        </tr>
+    {{-- ===== INFO ATAS - PERBAIKAN LAYOUT ===== --}}
+    <table class="info-table">
+        <tbody>
+            <tr class="row-tight">
+                <td class="info-label w-lbl">Status</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-val">{{ strtoupper($status ?? 'CONFIRM') }}</td>
+
+                <td class="w-sp"></td>
+
+                <td class="info-label w-lblr">Payment Method</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-valr">{{ ucfirst($payment['method'] ?? 'personal') }}</td>
+            </tr>
+
+            <tr class="row-tight">
+                <td class="info-label w-lbl">Reserved By</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-val">{{ $companyName ?: '-' }}</td>
+
+                <td class="w-sp"></td>
+
+                <td class="info-label w-lblr">Entry Date</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-valr">{{ $fmtDateFull($issuedAt ?? ($generatedAt ?? now())) }}</td>
+            </tr>
+
+            <tr class="row-tight">
+                <td class="info-label w-lbl">Guest Name</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-val">{{ $row['guest_display'] ?? '-' }}</td>
+
+                <td class="w-sp"></td>
+
+                <td class="info-label w-lblr">Clerk</td>
+                <td class="w-colon">:</td>
+                <td class="info-value w-valr">{{ $clerkName ?? '-' }}</td>
+            </tr>
+        </tbody>
     </table>
 
     <div class="line"></div>
@@ -439,63 +512,56 @@
                 <td class="right nowrap">{{ $fmtMoney($amount) }}</td>
             </tr>
         </tbody>
-        <tfoot>
-            <tr>
-                <td colspan="4" class="right">TOTAL NIGHTS</td>
-                <td class="center">{{ $totalNights }}</td>
-                <td colspan="2" class="right">TOTAL AMOUNT</td>
-                <td class="right">{{ $fmtMoney($total) }}</td>
-            </tr>
-        </tfoot>
     </table>
 
     {{-- ===== TOTALS BOX ===== --}}
     <div class="totals-box-wrap">
         <table class="totals-box">
             <tr>
-                <td class="tb-k">Basic Rate</td>
-                <td class="tb-v">{{ $fmtMoney($breakdown['basic_rate']) }}</td>
+                <td class="tb-k">Discount {{ $discPct }}% × Nights</td>
+                <td class="tb-v">
+                    {{ $fmtMoney($breakdown['rate_after_disc_times_nights'] ?? 0) }}
+                </td>
             </tr>
             <tr>
-                <td class="tb-k">Room Discount</td>
-                <td class="tb-v">{{ number_format((float) $breakdown['room_discount_percent'], 2, ',', '.') }}%</td>
-            </tr>
-            <tr>
-                <td class="tb-k">Room Tax</td>
-                <td class="tb-v">{{ number_format((float) $breakdown['room_tax_percent'], 2, ',', '.') }}%</td>
-            </tr>
-            <tr>
-                <td class="tb-k">Service Charge</td>
-                <td class="tb-v">{{ $fmtMoney($breakdown['service_rp']) }}</td>
+                <td class="tb-k">Service (Rp)</td>
+                <td class="tb-v">
+                    {{ $fmtMoney($breakdown['service_rp'] ?? 0) }}
+                </td>
             </tr>
             <tr>
                 <td class="tb-k">Extra Bed</td>
-                <td class="tb-v">{{ $fmtMoney($breakdown['extra_bed_rp']) }}</td>
+                <td class="tb-v">
+                    {{ $fmtMoney($breakdown['extra_bed_rp'] ?? 0) }}
+                </td>
             </tr>
             <tr>
-                <td class="tb-k">Late Arrival Penalty</td>
-                <td class="tb-v">{{ $fmtMoney($breakdown['late_arrival_penalty_rp']) }}</td>
+                <td class="tb-k">
+                    Late Arrival Penalty{{ $penaltyHours ? ' (' . $penaltyHours . ' h)' : '' }}
+                </td>
+                <td class="tb-v">
+                    {{ $fmtMoney($breakdown['late_arrival_penalty_rp'] ?? 0) }}
+                </td>
+            </tr>
+            <tr>
+                <td class="tb-k">
+                    Tax {{ number_format((float) ($breakdown['room_tax_percent'] ?? $taxPct), 2, ',', '.') }}%
+                </td>
+                <td class="tb-v">
+                    {{ $fmtMoney($tax_total ?? 0) }}
+                </td>
             </tr>
 
             <tr class="tb-line">
                 <th colspan="2"></th>
             </tr>
-
-            <tr>
-                <td class="tb-k">Rate × Nights</td>
-                <td class="tb-v">{{ $fmtMoney($finalRatePerNight) }} × {{ $totalNights }}</td>
-            </tr>
-
-            <tr class="tb-line">
-                <th colspan="2"></th>
-            </tr>
-
             <tr class="tb-strong">
-                <td class="tb-k">GRAND TOTAL</td>
-                <td class="tb-v">{{ $fmtMoney($total) }}</td>
+                <td class="tb-k">Grand Total</td>
+                <td class="tb-v">{{ $fmtMoney($total ?? 0) }}</td>
             </tr>
         </table>
     </div>
+
 
     <div class="line"></div>
 

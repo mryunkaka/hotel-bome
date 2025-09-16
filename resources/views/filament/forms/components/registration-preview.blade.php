@@ -23,6 +23,8 @@
         $dep = Carbon::parse($departureRaw)->startOfDay();
         $nights = $arr->diffInDays($dep); // 13/09 → 15/09 = 2 malam
     }
+    // ⬇️ tambah: jaga minimal 1 malam utk hitung
+    $nightCount = max(1, (int) ($nights ?? 1));
 
     // Hitungan Extra Bed
     $qtyExtraBed = (int) ($rg?->extra_bed ?? 0);
@@ -48,7 +50,7 @@
     $finalRate = ReservationMath::calcFinalRate($rowCalc, [
         'tax_lookup' => $taxLookup,
         'extra_bed_price' => 100000,
-        'service_taxable' => false, // ubah true jika service ikut kena pajak
+        'service_taxable' => true,
     ]);
 
     // Ambil angka untuk ditampilkan di ringkasan
@@ -57,42 +59,53 @@
     $taxPct = $rg?->tax?->percent !== null ? (float) $rg->tax->percent : 0.0;
     $serviceRp = (int) ($rg?->service ?? 0);
 
-    /**
-     * ===========================
-     *  Denda Keterlambatan (Late Arrival Penalty)
-     * ===========================
-     * Aturan default (bisa diubah):
-     * - Rp 25.000 per jam, dibulatkan ke atas
-     * - Maksimal 50% dari basicRate
-     * - Berlaku jika (actual_checkin ATAU now) > expected_checkin
-     */
-    $LATE_PENALTY_PER_HOUR = 25000;
-    $LATE_PENALTY_MAX_PERCENT_OF_BASE = 50; // batas penalty 50% dari room rate
+    // Diskon per malam & total semua malam
+    $basicDiscountAmount = round(($basicRate * $discPct) / 100);
+    $basicRateDisc = max(0, $basicRate - $basicDiscountAmount); // after discount / night
+    $basicRateDiscAll = $basicRateDisc * $nightCount; // after discount × nights
 
-    $penaltyHours = 0;
-    $penaltyRp = 0;
+    // Denda keterlambatan (pakai helper)
+    // Denda keterlambatan (pakai helper)
+    $__pen = ReservationMath::latePenalty($rg?->expected_checkin, $rg?->actual_checkin, $basicRate, [
+        'tz' => 'Asia/Makassar',
+    ]);
+    $penaltyHours = (int) ($__pen['hours'] ?? 0);
+    $penaltyRp = (int) ($__pen['amount'] ?? 0);
 
-    if ($rg?->expected_checkin) {
-        $arrivalAt = \Carbon\Carbon::parse($rg->expected_checkin, 'Asia/Makassar');
-        $refTime = $rg?->actual_checkin
-            ? \Carbon\Carbon::parse($rg->actual_checkin, 'Asia/Makassar')
-            : \Carbon\Carbon::now('Asia/Makassar');
+    // === REKALKULASI final rate: penalty ikut jadi dasar pajak ===
+    $rowCalc['late_arrival_penalty'] = $penaltyRp;
+    $finalRate = ReservationMath::calcFinalRate($rowCalc, [
+        'tax_lookup' => $taxLookup,
+        'extra_bed_price' => 100000,
+        'service_taxable' => true,
+    ]);
 
-        if ($refTime->greaterThan($arrivalAt)) {
-            $lateMins = $arrivalAt->diffInMinutes($refTime);
-            $penaltyHours = (int) ceil($lateMins / 60);
-            $penaltyRp = $penaltyHours * $LATE_PENALTY_PER_HOUR;
+    // Flag untuk tombol Edit / status (tetap)
+    $alreadyCheckin = !empty($rg?->actual_checkin);
 
-            if ($LATE_PENALTY_MAX_PERCENT_OF_BASE > 0 && $basicRate > 0) {
-                $cap = (int) round(($basicRate * $LATE_PENALTY_MAX_PERCENT_OF_BASE) / 100);
-                $penaltyRp = min($penaltyRp, $cap);
-            }
-        }
-    }
+    // === Pajak DI ATAS subtotal TERMASUK penalty ===
+    // --- kalkulasi per-malam & per-stay (tetap pakai variabel yang sudah ada) ---
+    $__nights = max(1, (int) ($nights ?? 1));
 
-    // Total akhir termasuk denda
-    $finalWithPenalty = $finalRate + $penaltyRp;
+    // Rate setelah diskon PER MALAM (sudah Anda siapkan sebagai $basicRateDisc)
+    $rateAfterDiscPerNight = $basicRateDisc;
+
+    // Rate setelah diskon untuk SELURUH malam
+    $rateAfterDiscTimesNights = $rateAfterDiscPerNight * $__nights;
+
+    // === Dasar pajak: termasuk penalty (kena pajak) ===
+    $taxBase = $rateAfterDiscTimesNights + $serviceRp + $extraBedSub + $penaltyRp;
+
+    // Pajak persen di atas subtotal (dibulatkan ke rupiah)
+    $taxfinal = $taxPct > 0 ? round(($taxBase * $taxPct) / 100) : 0;
+
+    // RATE ++ (per stay): subtotal + pajak
+    $finalWithPenalty = $taxBase + $taxfinal;
+
+    // Catatan: $finalRate dari helper tetap dibiarkan (jika dipakai tempat lain).
+
 @endphp
+
 
 @if (!$rg)
     <div class="p-4 text-sm text-gray-500">
@@ -262,12 +275,14 @@
                     </x-filament::button>
                 @endif
 
-                {{-- ROOM CHANGE: ke halaman edit --}}
-                <x-filament::button color="warning" tag="a" :href="\App\Filament\Resources\Reservations\ReservationResource::getUrl('edit', [
-                    'record' => $rg->reservation_id,
-                ])" icon="heroicon-o-pencil-square">
-                    Edit
-                </x-filament::button>
+                @if (!$alreadyCheckin)
+                    <x-filament::button color="warning" tag="a" :href="\App\Filament\Resources\Reservations\ReservationResource::getUrl('edit', [
+                        'record' => $rg->reservation_id,
+                    ])"
+                        icon="heroicon-o-pencil-square">
+                        Edit
+                    </x-filament::button>
+                @endif
             </div>
         </div>
 
@@ -342,16 +357,8 @@
                 {{-- Ringkasan angka + garis tabel --}}
                 <table class="kv">
                     <tr>
-                        <td class="k">Basic Rate</td>
-                        <td class="v money">{{ $money($basicRate) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="k">Room Discount</td>
-                        <td class="v">{{ number_format($discPct, 2, ',', '.') }}%</td>
-                    </tr>
-                    <tr>
-                        <td class="k">Room Tax</td>
-                        <td class="v">{{ number_format($taxPct, 2, ',', '.') }}%</td>
+                        <td class="k">Rate After Discount × Nights</td>
+                        <td class="v money">{{ $money($basicRateDiscAll) }}</td>
                     </tr>
                     <tr>
                         <td class="k">Service (Rp)</td>
@@ -367,12 +374,17 @@
                         </td>
                         <td class="v money">{{ $money($penaltyRp) }}</td>
                     </tr>
+                    <tr>
+                        <td class="k">Tax {{ number_format($taxPct, 2, ',', '.') }}%</td>
+                        <td class="v money">{{ $money($taxfinal) }}</td>
+                    </tr>
                 </table>
 
                 <div class="ttl">
                     <div class="label">RATE ++</div>
                     <div class="val money">{{ $money($finalWithPenalty) }}</div>
                 </div>
+
 
             </div>
 
@@ -403,6 +415,10 @@
                     <div class="reg-row">
                         <div>Departure</div>
                         <div>{{ $fmt($rg?->expected_checkout) }}</div>
+                    </div>
+                    <div class="reg-row">
+                        <div>Checkin</div>
+                        <div>{{ $fmt($rg?->actual_checkin) }}</div>
                     </div>
                     <div class="reg-row">
                         <div>Company</div>
@@ -442,6 +458,22 @@
                         <div>Note</div>
                         <div>{{ $rg?->note ?? '-' }}</div>
                     </div>
+                </div>
+                <div class="group">
+                    <table class="kv">
+                        <tr>
+                            <td class="k">Basic Rate</td>
+                            <td class="v money">{{ $money($basicRate) }}</td>
+                        </tr>
+                        <tr>
+                            <td class="k">Room Discount</td>
+                            <td class="v">{{ number_format($discPct, 2, ',', '.') }}%</td>
+                        </tr>
+                        <tr>
+                            <td class="k">Rate After Discount / Night</td>
+                            <td class="v money">{{ $money($basicRateDisc) }}</td>
+                        </tr>
+                    </table>
                 </div>
             </div>
         </div>

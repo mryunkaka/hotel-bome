@@ -16,12 +16,97 @@ use Illuminate\Support\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\ReservationGuest;
 use App\Support\ReservationMath;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Storage;
 
 Route::redirect('/', '/admin');
+
+Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest $guest) {
+    $reservation = $guest->reservation()
+        ->with(['guest:id,name,salutation,address,city,phone,email', 'group:id,name,address,city,phone,handphone,fax,email', 'creator:id,name'])
+        ->firstOrFail();
+
+    $guest->loadMissing(['guest:id,name,salutation,address,city,phone,email', 'room:id,room_no,type,price', 'tax:id,percent']);
+
+    $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
+    $hotel = Hotel::find($hid);
+
+    // Logo -> base64 untuk file lokal, atau URL langsung (aktifkan remote)
+    $allowRemote = false;
+    $logoData = null;
+    if (function_exists('buildPdfLogoData')) {
+        $logoData = buildPdfLogoData($hotel?->logo ?? null);
+    } else {
+        $logoPath = $hotel?->logo ?? null;
+        if ($logoPath && ! Str::startsWith($logoPath, ['http://', 'https://'])) {
+            try {
+                $full = Storage::disk('public')->path($logoPath);
+                if (is_file($full)) {
+                    $mime     = mime_content_type($full) ?: 'image/png';
+                    $logoData = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($full));
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+    }
+
+    // “actual” nights (jika actual_out ada, pakai actual; kalau belum, fallback expected)
+    $in   = $guest->actual_checkin;
+    $out  = $guest->actual_checkout ?: $guest->expected_checkout;
+    $calc = \App\Support\ReservationMath::guestBill($guest, ['tz' => 'Asia/Makassar']);
+    $n    = (int) $calc['nights'];
+    $rate = (int) $calc['rate'];
+
+    // opsional: kirim juga “expected” nights kalau mau ditampilkan berdampingan
+    $nExpected = ReservationMath::nights($guest->expected_checkin, $guest->expected_checkout);
+
+    $pax  = (int) ($guest->jumlah_orang ?? max(1, (int)$guest->male + (int)$guest->female + (int)$guest->children));
+
+    $view = [
+        'paper'       => 'A4',
+        'orientation' => request('o', 'portrait'),
+        'hotel'       => $hotel,
+        'logoData'    => $logoData,
+        'invoiceId'   => $reservation->id,
+        'invoiceNo'   => $reservation->reservation_no ?? ('#' . $reservation->id),
+        'generatedAt' => now(),
+        'reservation' => $reservation,
+        'clerkName'   => $reservation->creator?->name,
+        'row' => [
+            'room_no'          => $guest->room?->room_no,
+            'category'         => $guest->room?->type,
+            'rate'             => $rate,
+            'nights'           => $n,
+            'nights_expected'  => $nExpected, // optional
+            'ps'               => $pax,
+            'guest_display'    => $guest->guest?->display_name ?? $guest->guest?->name,
+            'actual_in'        => $in,
+            'actual_out'       => $guest->actual_checkout,
+            'expected_out'     => $guest->expected_checkout,
+            'discount_percent' => (float) $calc['disc_percent'],
+            'tax_percent'      => (float) $calc['tax_percent'],
+            'service'          => (int)   $calc['service'],
+            'extra_bed_total'  => (int)   $calc['extra'],
+        ],
+        'calc' => $calc,
+    ];
+
+    if (request()->boolean('html')) {
+        return response()->view('prints.reservations.folio', $view);
+    }
+
+    $pdf = Pdf::loadView('prints.reservations.folio', $view)
+        ->setPaper('a4', $view['orientation'])
+        ->setOption(['isRemoteEnabled' => $allowRemote]); // aktifkan jika logo URL
+
+    $filename = 'folio-' . ($reservation->reservation_no ?? $reservation->id) . '-' . $guest->id . '.pdf';
+
+    return response()->stream(fn() => print($pdf->output()), 200, [
+        'Content-Type'        => 'application/pdf',
+        'Content-Disposition' => 'inline; filename="' . $filename . '"',
+    ]);
+})->name('reservation-guests.folio');
 
 Route::post('/admin/reservation-guests/{guest}/checkin', function (Request $request, ReservationGuest $guest) {
     // ===== Muat relasi yang dibutuhkan =====
@@ -110,6 +195,7 @@ Route::post('/admin/reservation-guests/{guest}/checkin', function (Request $requ
 
     return back()->with('flash_success', $msg);
 })->name('reservation-guests.checkin')->middleware(['web', 'auth']);
+
 Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest $guest) {
     $reservation = $guest->reservation()->with([
         'guest:id,name,salutation,address,city,phone,email',

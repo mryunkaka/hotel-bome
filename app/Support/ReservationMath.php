@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use Illuminate\Support\Carbon;
+use App\Models\ReservationGuest;
 
 final class ReservationMath
 {
@@ -200,5 +201,63 @@ final class ReservationMath
         }
 
         return (float) $final;
+    }
+
+    /**
+     * Hitung breakdown billing untuk satu ReservationGuest (semua angka dalam rupiah integer).
+     * Sumber kebenaran tunggal untuk preview, folio, dan print.
+     */
+    public static function guestBill(ReservationGuest $rg, array $opts = []): array
+    {
+        $tz = $opts['tz'] ?? 'Asia/Makassar';
+
+        // START & END untuk perhitungan nights
+        $start = $rg->actual_checkin ?: $rg->expected_checkin;
+        // kalau belum checkout, pakai "sekarang" supaya konsisten dengan halaman Payment
+        $end   = $rg->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
+
+        $nights = self::nights($start, $end, 1);
+
+        $rate     = (int) round($rg->room_rate ?? $rg->room?->price ?? 0);
+        $discPct  = (float) ($rg->discount_percent ?? 0);
+        $service  = (int) ($rg->service ?? 0);
+        $extra    = (int) ($rg->extra_bed_total ?? 0);
+        $taxPct   = (float) ($rg->tax_percent ?? ($rg->tax?->percent ?? 0));
+
+        // Penalty (pakai expected_arrival jika ada)
+        $expectedArrival = $rg->reservation?->expected_arrival ?? $rg->expected_checkin;
+        $pen = self::latePenalty($expectedArrival, $rg->actual_checkin, $rate, ['tz' => $tz]);
+        $penalty = (int) ($pen['amount'] ?? 0);
+        $penalty_hours = (int) ($pen['hours'] ?? 0);
+
+        // Diskon per malam & total kamar setelah diskon
+        $discPerNight = (int) round(($rate * $discPct) / 100);
+        $rateAfterDiscPerNight = max(0, $rate - $discPerNight);
+        $roomAfterDisc = $rateAfterDiscPerNight * max(1, $nights);
+
+        // Subtotal, pajak, grand
+        $subtotal = $roomAfterDisc + $service + $extra + $penalty;
+        $taxRp    = (int) round(($subtotal * $taxPct) / 100);
+        $grand    = $subtotal + $taxRp;
+        $deposit  = (int) ($rg->reservation?->deposit ?? 0);
+        $due      = max(0, $grand - $deposit);
+
+        return [
+            'nights'                  => $nights,
+            'rate'                    => $rate,
+            'disc_percent'            => $discPct,
+            'disc_per_night'          => $discPerNight,
+            'rate_after_disc_per_night' => $rateAfterDiscPerNight,
+            'room_after_disc'         => $roomAfterDisc,
+            'service'                 => $service,
+            'extra'                   => $extra,
+            'penalty'                 => $penalty,
+            'penalty_hours'           => $penalty_hours,
+            'tax_percent'             => $taxPct,
+            'tax_rp'                  => $taxRp,
+            'grand'                   => $grand,
+            'deposit'                 => $deposit,
+            'due'                     => $due,
+        ];
     }
 }

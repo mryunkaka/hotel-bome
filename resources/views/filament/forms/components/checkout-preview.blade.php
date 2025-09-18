@@ -1,0 +1,580 @@
+@php
+    use App\Support\ReservationMath;
+    use App\Support\ReservationView;
+    use Illuminate\Support\Carbon;
+
+    /** @var \App\Models\ReservationGuest|null $rg */
+    $rg = is_callable($getRecord ?? null) ? $getRecord() : null;
+    $res = $rg?->reservation;
+    $guest = $rg?->guest;
+    $room = $rg?->room;
+    $group = $res?->group;
+
+    $fmt = fn($dt) => ReservationView::fmtDate($dt, true);
+    $fmtD = fn($dt) => $dt ? Carbon::parse($dt)->format('d/m/Y') : '-';
+    $money = fn($v) => ReservationView::fmtMoney($v);
+
+    // nights
+    // nights (kalau belum checkout, pakai sekarang)
+    $nights = 1;
+    $cin = $rg?->actual_checkin ?? $rg?->expected_checkin;
+    $cout = $rg?->actual_checkout ?: \Illuminate\Support\Carbon::now('Asia/Makassar');
+    if ($cin && $cout) {
+        $nights = max(
+            1,
+            \Illuminate\Support\Carbon::parse($cin)
+                ->startOfDay()
+                ->diffInDays(\Illuminate\Support\Carbon::parse($cout)->startOfDay()),
+        );
+    }
+
+    // angka-angka bill
+    $basicRate = (float) ($rg?->room_rate ?? 0);
+    $discPct = (float) ($rg?->discount_percent ?? 0);
+    $discAmount = round(($basicRate * $discPct) / 100);
+    $afterDiscPerNight = max(0, $basicRate - $discAmount);
+    $afterDiscTimesNights = $afterDiscPerNight * $nights;
+    $serviceRp = (int) ($rg?->service ?? 0);
+    $extraQty = (int) ($rg?->extra_bed ?? 0);
+    $extraPrice = 100_000;
+    $extraSub = $extraQty * $extraPrice;
+    $pen = ReservationMath::latePenalty($rg?->expected_checkin, $rg?->actual_checkin, $basicRate, [
+        'tz' => 'Asia/Makassar',
+    ]);
+    $penaltyRp = (int) ($pen['amount'] ?? 0);
+    $taxPct = (float) ($rg?->tax?->percent ?? 0);
+    $taxBase = $afterDiscTimesNights + $serviceRp + $extraSub + $penaltyRp;
+    $taxRp = (int) round(($taxBase * $taxPct) / 100);
+    $grand = (int) ($taxBase + $taxRp);
+    $deposit = (int) ($res?->deposit ?? 0);
+    $due = max(0, $grand - $deposit);
+
+    /** @var \App\Models\ReservationGuest|null $rg */
+    $rg = is_callable($getRecord ?? null) ? $getRecord() : null;
+    $res = $rg?->reservation;
+    $others =
+        $res
+            ?->reservationGuests()
+            ->with(['guest:id,name', 'room:id,room_no'])
+            ->orderBy('id')
+            ->get() ?? collect();
+@endphp
+
+@if (!$rg)
+    <div class="p-4" style="color:#6b7280;font-size:14px">
+        Record tidak tersedia.</div>
+@else
+    <style>
+        .hb-wrap {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #fff
+        }
+
+        .hb-head {
+            padding: 10px 14px;
+            border-bottom: 1px solid #e5e7eb;
+            font-weight: 700
+        }
+
+        .hb-body {
+            padding: 14px
+        }
+
+        .muted {
+            color: #6b7280
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px
+        }
+
+        @media(min-width:1024px) {
+            .grid-2 {
+                grid-template-columns: 1.2fr 0.8fr
+            }
+        }
+
+        .card {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            overflow: hidden
+        }
+
+        .card .title {
+            padding: 8px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            font-weight: 700
+        }
+
+        .rows {
+            display: grid;
+            grid-template-columns: 160px 1fr
+        }
+
+        .row {
+            display: contents
+        }
+
+        .row>div {
+            padding: 6px 10px;
+            border-bottom: 1px solid #f1f5f9
+        }
+
+        .row .k {
+            color: #6b7280
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid #c7d2fe;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 12px
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse
+        }
+
+        .table tr {
+            border-bottom: 1px solid #e5e7eb
+        }
+
+        .table td {
+            padding: 8px 10px;
+            vertical-align: top
+        }
+
+        .table .k {
+            color: #6b7280
+        }
+
+        .table .v {
+            text-align: right;
+            font-variant-numeric: tabular-nums
+        }
+
+        .total {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            border-top: 2px solid #d1d5db;
+            background: #fafafa;
+            font-weight: 800
+        }
+
+        /* full-width section */
+        .grid-1 {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+            /* beri jarak dengan grid-2 */
+        }
+
+        /* header tabel (biar gaya sama dengan td) */
+        .table thead th {
+            padding: 8px 10px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+            font-weight: 700;
+            color: #374151;
+            /* mirip .k */
+        }
+    </style>
+
+    <div class="hb-wrap">
+        @if ($showHeader ?? false)
+            <div class="hb-head">Guest Bill</div>
+        @endif
+        <div class="hb-body">
+            <div style="margin-bottom:8px;font-size:14px">
+                <span class="muted">Register No :</span>
+                <strong>{{ $res?->reservation_no ?? ($res?->id ?? '-') }}</strong>
+                @if ($rg?->bill_no)
+                    <span class="muted" style="margin:0 6px">•</span>
+                    <span class="muted">Bill No :</span> <strong>{{ $rg->bill_no }}</strong>
+                @endif
+                @if ($rg?->bill_closed_at)
+                    <span class="muted" style="margin:0 6px">•</span>
+                    <span class="muted">Closed :</span> <strong>{{ $fmt($rg->bill_closed_at) }}</strong>
+                @endif
+            </div>
+
+            <div class="grid-1">
+                <div class="card">
+                    <div class="title">Guest Information</div>
+
+                    @php
+                        $allGuests = $res
+                            ? $res
+                                ->reservationGuests()
+                                ->with(['guest:id,name', 'room:id,room_no,type', 'tax:id,percent'])
+                                ->orderBy('id')
+                                ->get()
+                            : collect([$rg]);
+
+                        $totalGuests = $allGuests->count();
+                        $depositRes = (int) ($res->deposit ?? 0);
+                    @endphp
+
+                    <div class="hb-body" style="padding:0">
+                        <table class="table" style="font-size:13px">
+                            <thead>
+                                <tr>
+                                    <th>Guest</th>
+                                    <th>Room / Type</th>
+                                    <th>Pax</th>
+                                    <th>Nights</th>
+                                    <th>Check-in</th>
+                                    <th>Check-out</th>
+                                    <th>Status</th>
+                                    <th>Amount Due</th>
+                                    <th>Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse ($allGuests as $g)
+                                    @php
+                                                                                // Pax
+                                                                                $paxVal =
+                                                                                    (int)
+                                        ($g->jumlah_orang ??
+                                                                                        (int) ($g->male ?? 0) +
+                                                                                            (int) ($g->female ?? 0) +
+                                                                                            (int) ($g->children ?? 0));
+
+                                                                                // Nights (pakai actual_out jika ada; kalau belum, gunakan expected_checkout)
+                                                                                $in  = $g->actual_checkin ?: $g->expected_checkin;
+                                        $out = $g->actual_checkout ?: \Illuminate\Support\Carbon::now('Asia/Makassar');
+                                        $n   = ($in && $out)
+                                            ? max(1,
+                                                \Illuminate\Support\Carbon::parse($in)->startOfDay()
+                                                  ->diffInDays(\Illuminate\Support\Carbon::parse($out)->startOfDay())
+                                              )
+                                            : 1,
+
+                                                                                // Hitungan Amount Due (selaras dengan kartu “Guest Bill”)
+                                                                                $basicRate = (float) ($g->room_rate ?? 0);
+                                                                                $discPct = (float) ($g->discount_percent ?? 0);
+                                                                                $discAmount = round(($basicRate * $discPct) / 100);
+                                                                                $rateAfter = max(0, $basicRate - $discAmount);
+
+                                                                                // Service & Extra bed
+                                                                                $serviceRp = (int) ($g->service ?? 0);
+                                                                                // gunakan total jika ada; fallback qty × 100.000
+                                                                                $extraRp = (int) ($g->extra_bed_total ?? (int) ($g->extra_bed ?? 0) * 100_000);
+
+                                                                                // Late arrival penalty (pakai helper)
+                                                                                $pen = ReservationMath::latePenalty(
+                                                                                    $g->expected_checkin,
+                                                                                    $g->actual_checkin,
+                                                                                    $basicRate,
+                                                                                    ['tz' => 'Asia/Makassar'],
+                                                                                );
+                                                                                $penaltyRp = (int) ($pen['amount'] ?? 0);
+
+                                                                                // Tax
+                                                                                $taxPct = (float) ($g->tax_percent ?? ($g->tax?->percent ?? 0));
+
+                                                                                $taxBase = $rateAfter * $n + $serviceRp + $extraRp + $penaltyRp;
+                                                                                $taxRp = (int) round(($taxBase * $taxPct) / 100);
+                                                                                $grand = (int) ($taxBase + $taxRp);
+
+                                                                                // Deposit: hanya dipotong jika hanya ada satu guest pada reservasi
+                                                                                $depositUse = $totalGuests === 1 ? $depositRes : 0;
+                                                                                $amountDue = max(0, $grand - $depositUse);
+                                    @endphp
+
+                                    <tr>
+                                        <td>
+                                            {{ $g->guest?->name ?? '-' }}
+                                            @if (($g->breakfast ?? null) === 'Yes')
+                                                <span class="pill" style="margin-left:6px">Breakfast</span>
+                                            @endif
+                                            @if ($g->id === ($rg->id ?? null))
+                                                <span class="pill"
+                                                    style="margin-left:6px;background:#ecfeff;border-color:#a5f3fc;color:#075985">Current</span>
+                                            @endif
+                                        </td>
+                                        <td>
+                                            {{ $g->room?->room_no ?? '-' }}{{ $g->room?->type ? ' — ' . $g->room->type : '' }}
+                                        </td>
+                                        <td class="v">{{ $paxVal }}</td>
+                                        <td class="v">{{ $n }}</td>
+                                        <td>{{ ReservationView::fmtDate($g->actual_checkin, true) }}</td>
+                                        <td>{{ ReservationView::fmtDate($g->actual_checkout, true) }}</td>
+                                        <td>
+                                            {{ $g->actual_checkout ? 'Checked-out' : 'In-house' }}
+                                            @if (!$g->actual_checkout && $g->expected_checkout)
+                                                <span class="muted"> (ETD
+                                                    {{ ReservationView::fmtDate($g->expected_checkout, true) }})</span>
+                                            @endif
+                                        </td>
+                                        <td class="v">{{ ReservationView::fmtMoney($amountDue) }}</td>
+                                        <td>
+                                            @if ($g->id === ($rg->id ?? null))
+                                                <span class="pill"
+                                                    style="background:#eef2ff;border-color:#c7d2fe;color:#3730a3">Selected</span>
+                                            @else
+                                                <a href="{{ url('/admin/reservation-guest-check-outs/' . $g->id . '/edit') }}"
+                                                    class="pill"
+                                                    style="text-decoration:none;display:inline-block;padding:2px 8px;border:1px solid #e5e7eb;border-radius:999px;background:#f9fafb">
+                                                    Select
+                                                </a>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="9" class="muted" style="padding:10px">No guests found.</td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+
+            <div class="grid-2">
+                {{-- KIRI: Guest & Group --}}
+                <div class="space-y-4">
+                    {{-- === Reserved By (Guest / Company) === --}}
+                    @php
+                        $rbType = strtoupper($res?->reserved_by_type ?? 'GUEST');
+                        $isGroup = $rbType === 'GROUP' && $res?->group;
+                        $rbTitle = $isGroup ? 'Reserved By — Company' : 'Reserved By — Guest';
+                        // Sumber data: group jika GROUP, else guest (fallback ke $guest aktif)
+                        $rb = $isGroup ? $res?->group : $res?->guest ?? $guest;
+                    @endphp
+
+                    <div class="card">
+                        <div class="title">{{ $rbTitle }}</div>
+                        <div class="rows">
+                            <div class="row">
+                                <div class="k">Name</div>
+                                <div>{{ $rb?->name ?? '-' }}</div>
+                            </div>
+
+                            <div class="row">
+                                <div class="k">Address</div>
+                                <div>{{ $rb?->address ?? '-' }}</div>
+                            </div>
+
+                            <div class="row">
+                                <div class="k">City</div>
+                                <div>{{ $rb?->city ?? '-' }}</div>
+                            </div>
+
+                            <div class="row">
+                                <div class="k">Phone</div>
+                                <div>{{ $rb?->phone ?? ($rb?->handphone ?? '-') }}</div>
+                            </div>
+
+                            <div class="row">
+                                <div class="k">Email</div>
+                                <div>{{ $rb?->email ?? '-' }}</div>
+                            </div>
+
+                            @if ($isGroup && !empty($res?->group?->fax))
+                                <div class="row">
+                                    <div class="k">Fax</div>
+                                    <div>{{ $res->group->fax }}</div>
+                                </div>
+                            @endif
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="title">Guest Information</div>
+                        <div class="rows">
+                            <div class="row">
+                                <div class="k">Name</div>
+                                <div>{{ $guest?->display_name ?? ($guest?->name ?? '-') }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Address</div>
+                                <div>{{ $guest?->address ?? '-' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">City/Country</div>
+                                <div>
+                                    {{ $guest?->city ?? '-' }}{{ $guest?->nationality ? ' / ' . $guest->nationality : '' }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Profession</div>
+                                <div>{{ $guest?->profession ?? '-' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Identity</div>
+                                <div>{{ $guest?->id_type ?? '-' }}
+                                    {{ $guest?->id_card ? '— ' . $guest->id_card : '' }} </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Birth</div>
+                                <div>
+                                    {{ $guest?->birth_place ? $guest->birth_place . ', ' : '' }}{{ $guest?->birth_date ? $fmtD($guest->birth_date) : '-' }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Issued</div>
+                                <div>
+                                    {{ $guest?->issued_place ? $guest->issued_place . ', ' : '' }}{{ $guest?->issued_date ? $fmtD($guest->issued_date) : '-' }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Phone</div>
+                                <div>{{ $guest?->phone ?? '-' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Email</div>
+                                <div>{{ $guest?->email ?? '-' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Room</div>
+                                <div>{{ $room?->room_no ?? '-' }}{{ $room?->type ? ' — ' . $room->type : '' }}
+                                    @if ($rg->breakfast ?? '' === 'Yes')
+                                        <span class="pill" style="margin-left:6px">Breakfast</span>
+                                    @endif
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Pax</div>
+                                <div>
+                                    {{ (int) ($rg->jumlah_orang ?? ($rg->male ?? 0) + ($rg->female ?? 0) + ($rg->children ?? 0)) }}
+                                    <span class="muted"> (M {{ (int) ($rg->male ?? 0) }}, F
+                                        {{ (int) ($rg->female ?? 0) }}, C {{ (int) ($rg->children ?? 0) }})</span>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Extra Bed</div>
+                                <div>{{ $extraQty > 0 ? $extraQty . ' — ' . $money($extraSub) : '-' }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                {{-- KANAN: Reservation Summary + Bill --}}
+                <div class="space-y-4">
+                    <div class="card">
+                        <div class="title">Reservation Summary</div>
+                        <div class="rows">
+                            <div class="row">
+                                <div class="k">Purpose of Visit</div>
+                                <div>{{ $res?->purpose ?? '-' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Length of Stay</div>
+                                <div>{{ $nights }} Night(s)</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Arrival</div>
+                                <div>{{ $fmt($rg?->expected_checkin) }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Departure</div>
+                                <div>
+                                    {{ $fmt($rg?->actual_checkout ?: \Illuminate\Support\Carbon::now('Asia/Makassar')) }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Check-in</div>
+                                <div>{{ $fmt($rg?->actual_checkin) }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Company</div>
+                                <div>{{ $res?->company ?? ($group?->company ?? '-') }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Charge</div>
+                                <div>{{ $res?->charge_to ?? 'Personal Account' }}</div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Rate Code / Type</div>
+                                <div>{{ $rg?->rate_code ?? '-' }}{{ $rg?->rate_type ? ' — ' . $rg->rate_type : '' }}
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Remarks</div>
+                                <div>{{ $res?->remarks ?? '-' }}</div>
+                            </div>
+                        </div>
+
+                        <table class="table" style="margin-top:8px">
+                            <tr>
+                                <td class="k">Basic Rate</td>
+                                <td class="v">{{ $money($basicRate) }}</td>
+                            </tr>
+                            <tr>
+                                <td class="k">Discount</td>
+                                <td class="v">{{ number_format($discPct, 2, ',', '.') }}%</td>
+                            </tr>
+                            <tr>
+                                <td class="k">After Discount / Night</td>
+                                <td class="v"><strong>{{ $money($afterDiscPerNight) }}</strong></td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="card">
+                        <div class="title">Guest Bill</div>
+                        <div class="hb-body" style="padding:0">
+                            <table class="table">
+                                <tr>
+                                    <td class="k">Rate After Discount × Nights</td>
+                                    <td class="v">{{ $money($afterDiscTimesNights) }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="k">Service (Rp)</td>
+                                    <td class="v">{{ $money($serviceRp) }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="k">Extra Bed</td>
+                                    <td class="v">{{ $money($extraSub) }}</td>
+                                </tr>
+                                @if ($penaltyRp > 0)
+                                    <tr>
+                                        <td class="k">Late Arrival Penalty</td>
+                                        <td class="v">{{ $money($penaltyRp) }}</td>
+                                    </tr>
+                                @endif
+                                <tr>
+                                    <td class="k">Tax {{ number_format($taxPct, 2, ',', '.') }}%</td>
+                                    <td class="v">{{ $money($taxRp) }}</td>
+                                </tr>
+                            </table>
+                            <div class="total">
+                                <div>RATE ++</div>
+                                <div>{{ $money($grand) }}</div>
+                            </div>
+                            @if ($deposit > 0)
+                                <table class="table">
+                                    <tr>
+                                        <td class="k">(-) Deposit</td>
+                                        <td class="v">{{ $money($deposit) }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="k"><strong>Amount Due</strong></td>
+                                        <td class="v"><strong>{{ $money($due) }}</strong></td>
+                                    </tr>
+                                </table>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+@endif

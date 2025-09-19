@@ -67,10 +67,6 @@ class ReservationGuest extends Model
     | Relationships
     |--------------------------------------------------------------------------
     */
-    public function tax(): BelongsTo
-    {
-        return $this->belongsTo(TaxSetting::class, 'id_tax');
-    }
 
     public function reservation(): BelongsTo
     {
@@ -111,8 +107,8 @@ class ReservationGuest extends Model
 
     public function getTaxPercentAttribute(): float
     {
-        // persen pajak dari relasi tax (0 jika tidak ada)
-        return (float) ($this->tax->percent ?? 0);
+        // Pajak sekarang global di reservation
+        return (float) ($this->reservation?->tax?->percent ?? 0);
     }
 
     public function getExtraBedTotalAttribute(): float
@@ -130,8 +126,7 @@ class ReservationGuest extends Model
 
     public function getRateAfterTaxAttribute(): float
     {
-        $tax = (float) $this->tax_percent;
-        $tax = max(0, min(100, $tax));
+        $tax = max(0, min(100, (float) $this->tax_percent));
         return $this->rate_after_discount * (1 + $tax / 100);
     }
 

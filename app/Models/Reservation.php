@@ -19,6 +19,7 @@ class Reservation extends Model
         'hotel_id',
         'group_id',
         'guest_id',
+        'id_tax',
         'reservation_no',
         'option',
         'method',
@@ -60,6 +61,11 @@ class Reservation extends Model
     | Relationships
     |--------------------------------------------------------------------------
     */
+
+    public function tax(): BelongsTo
+    {
+        return $this->belongsTo(TaxSetting::class, 'id_tax');
+    }
 
     // Group reservasi (optional)
     public function group(): BelongsTo

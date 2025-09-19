@@ -7,6 +7,7 @@ use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class ReservationGuestsTable
 {
@@ -55,6 +56,7 @@ class ReservationGuestsTable
             ->recordActions([
                 EditAction::make(),
             ])
+            ->modifyQueryUsing(fn(Builder $query) => $query->whereNotNull('actual_checkin'))
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),

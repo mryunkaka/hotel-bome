@@ -201,6 +201,7 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'guest:id,name,salutation,address,city,phone,email',
         'group:id,name,address,city,phone,handphone,fax,email',
         'creator:id,name',
+        'tax:id,percent',
     ])->firstOrFail();
 
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
@@ -214,7 +215,7 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'reservation.creator:id,name',
         'reservation.group:id,name,address,city,phone,handphone,fax,email',
         'reservation.guest:id,name,salutation,address,city,phone,email',
-        'tax:id,percent',
+        'reservation.tax:id,percent',
     ]);
 
     // Logo (tetap)
@@ -288,10 +289,10 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
 
     // ==== INI YANG DITAMBAHKAN KE ROW ====
     $discountPercent = (float) ($guest->discount_percent ?? 0);
-    $taxPercent      = (float) ($guest->tax_percent ?? ($guest->tax?->percent ?? 0));
+    $taxPercent      = (float) ($reservation->tax?->percent ?? 0);
     $serviceRp       = (float) ($guest->service ?? 0);
     $extraBedRp      = (float) ($guest->extra_bed_total ?? 0);
-    $idTax           = $guest->id_tax ?? null;
+    $idTax           = $reservation->id_tax ?? null;
 
     $subtotal  = $rate * $nights;
     $tax_total = 0.0; // (box lama masih 0; perhitungan detail dilakukan di Blade)

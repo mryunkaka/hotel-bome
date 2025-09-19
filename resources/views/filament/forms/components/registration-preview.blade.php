@@ -56,7 +56,7 @@
     // Ambil angka untuk ditampilkan di ringkasan
     $basicRate = (float) ($rg?->room_rate ?? 0);
     $discPct = (float) ($rg?->discount_percent ?? 0);
-    $taxPct = $rg?->tax?->percent !== null ? (float) $rg->tax->percent : 0.0;
+    $taxPct = (float) ($rg->reservation?->tax?->percent ?? 0);
     $serviceRp = (int) ($rg?->service ?? 0);
 
     // Diskon per malam & total semua malam
@@ -355,7 +355,7 @@
                 </div>
 
                 {{-- Ringkasan angka + garis tabel --}}
-                <table class="kv">
+                {{-- <table class="kv">
                     <tr>
                         <td class="k">Rate After Discount × Nights</td>
                         <td class="v money">{{ $money($basicRateDiscAll) }}</td>
@@ -383,7 +383,7 @@
                 <div class="ttl">
                     <div class="label">RATE ++</div>
                     <div class="val money">{{ $money($finalWithPenalty) }}</div>
-                </div>
+                </div> --}}
 
 
             </div>
@@ -459,7 +459,7 @@
                         <div>{{ $rg?->note ?? '-' }}</div>
                     </div>
                 </div>
-                <div class="group">
+                {{-- <div class="group">
                     <table class="kv">
                         <tr>
                             <td class="k">Basic Rate</td>
@@ -474,7 +474,7 @@
                             <td class="v money">{{ $money($basicRateDisc) }}</td>
                         </tr>
                     </table>
-                </div>
+                </div> --}}
             </div>
         </div>
     </div>

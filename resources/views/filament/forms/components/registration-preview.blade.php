@@ -17,14 +17,23 @@
     // Lama inap fallback (hanya jika properti length_of_stay tidak tersedia)
     $arrivalRaw = $rg?->expected_checkin;
     $departureRaw = $rg?->expected_checkout;
-    $nights = null;
-    if ($arrivalRaw && $departureRaw) {
-        $arr = Carbon::parse($arrivalRaw)->startOfDay();
-        $dep = Carbon::parse($departureRaw)->startOfDay();
-        $nights = $arr->diffInDays($dep); // 13/09 → 15/09 = 2 malam
+
+    // Nights rule:
+    // - If actual_checkin exists: actual_checkin → (actual_checkout or now)
+    // - If actual_checkin is null: expected_checkin → now
+    // - Same-day = 1 night
+    $tz = 'Asia/Makassar';
+
+    if (!empty($rg?->actual_checkin)) {
+        $start = $rg->actual_checkin;
+        $end   = $rg->actual_checkout ?: now($tz);
+    } else {
+        $start = $rg?->expected_checkin;
+        $end   = now($tz);
     }
-    // ⬇️ tambah: jaga minimal 1 malam utk hitung
-    $nightCount = max(1, (int) ($nights ?? 1));
+
+    $nights = ReservationMath::nights($start, $end, 1);
+    $nightCount = (int) $nights;
 
     // Hitungan Extra Bed
     $qtyExtraBed = (int) ($rg?->extra_bed ?? 0);

@@ -37,20 +37,30 @@
     ]);
     $penaltyRp = (int) ($pen['amount'] ?? 0);
 
-    $taxPct = (float) ($rg->reservation?->tax?->percent ?? 0);
-    $taxBase = $afterDiscTimesNights + $serviceRp + $extraSub + $penaltyRp;
-    $taxRp = (int) round(($taxBase * $taxPct) / 100);
-    $grand = (int) ($taxBase + $taxRp);
+    // Pajak & total (GLOBAL utk panel kanan)
+    $taxPct  = (float) ($res?->tax?->percent ?? 0);
+    $taxBase = $afterDiscTimesNights + $serviceRp + $extraSub + $penaltyRp; // subtotal tanpa pajak
+    $taxRp   = (int) round(($taxBase * $taxPct) / 100);
+    $grand   = (int) ($taxBase + $taxRp);
 
     $deposit = (int) ($res?->deposit ?? 0);
     $due     = max(0, $grand - $deposit);
 
     // Ambil list semua RG dlm reservation utk tabel kiri
     $others = $res?->reservationGuests()
-        ->with(['guest:id,name', 'room:id,room_no,type,price', 'tax:id,percent'])
+        ->with([
+            'guest:id,name',
+            'room:id,room_no,type,price',
+            'reservation.tax', // ⬅️ bukan 'tax' di RG
+        ])
         ->orderBy('id')
         ->get()
         ?? collect([$rg]);
+
+    // ⬇️ DIPINDAH KE SINI (sebelum dipakai di judul)
+    $allGuests     = $others;
+    $totalGuests   = $allGuests->count();
+    $allCheckedOut = $totalGuests > 0 && $allGuests->every(fn($gg) => filled($gg->actual_checkout));
 @endphp
 
 @if (!$rg)
@@ -83,6 +93,7 @@
         .table--compact .pill { font-size: 11px; padding: 1px 6px; }
         .table--compact .muted { font-size: 11px; }
         .table-scroll { overflow-x: auto; }
+        tfoot td { font-weight: 700; background: #fafafa; }
     </style>
 
     <div class="hb-wrap">
@@ -106,12 +117,30 @@
             {{-- ====== FULL-WIDTH: Tabel ringkasan semua guest ====== --}}
             <div class="grid-1">
                 <div class="card">
-                    <div class="title">Guest Information</div>
+                    <div class="title" style="display:flex;align-items:center;justify-content:space-between">
+                        <span>Guest Information</span>
+
+                        @if ($allCheckedOut)
+                            <a href="{{ route('reservation-guests.bill', $rg) }}"
+                               target="_blank" rel="noopener"
+                               class="pill"
+                               style="text-decoration:none;padding:4px 10px;border-color:#c7d2fe;background:#eef2ff;color:#3730a3">
+                                Print Guest Bill
+                            </a>
+                        @else
+                            <span class="pill"
+                                  title="Only available after all guests have checked out"
+                                  style="padding:4px 10px;background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed">
+                                Print Guest Bill
+                            </span>
+                        @endif
+                    </div>
 
                     @php
-                        $allGuests = $others;
-                        $totalGuests = $allGuests->count();
-                        $depositRes = (int) ($res->deposit ?? 0);
+                        // Accumulators untuk footer
+                        $sumBase  = 0; // total sebelum pajak
+                        $sumTax   = 0; // total pajak
+                        $sumGrand = 0; // total sesudah pajak (Amount Due + Tax)
                     @endphp
 
                     <div class="hb-body" style="padding:0">
@@ -165,16 +194,19 @@
                                         );
                                         $gPenaltyRp = (int) ($gPen['amount'] ?? 0);
 
-                                        // Tax
-                                        $taxPct = (float) ($rg->reservation?->tax?->percent ?? 0);
+                                        // Tax per-guest (buat hitung footer; tidak ditampilkan sebagai kolom)
+                                        $gTaxPct  = (float) ($g->reservation?->tax?->percent ?? 0);
                                         $gTaxBase = $gRateAfter * $n + $gServiceRp + $gExtraRp + $gPenaltyRp;
                                         $gTaxRp   = (int) round(($gTaxBase * $gTaxPct) / 100);
                                         $gGrand   = (int) ($gTaxBase + $gTaxRp);
 
-                                        // Deposit policy:
-                                        // - potong deposit hanya pada guest yang sedang Selected (biar match panel kanan)
-                                        $depositUse = ($g->id === ($rg->id ?? null)) ? $depositRes : 0;
-                                        $amountDue  = max(0, $gGrand - $depositUse);
+                                        // Akumulasi footer
+                                        $sumBase  += $gTaxBase;
+                                        $sumTax   += $gTaxRp;
+                                        $sumGrand += $gGrand;
+
+                                        // Amount Due per baris (tanpa potong deposit)
+                                        $amountDue  = $gTaxBase;
                                     @endphp
 
                                     <tr>
@@ -219,6 +251,42 @@
                                     <tr><td colspan="9" class="muted" style="padding:10px">No guests found.</td></tr>
                                 @endforelse
                                 </tbody>
+
+                                {{-- ===== Footer totals (tanpa ubah kolom) ===== --}}
+                                <tfoot>
+                                    <tr>
+                                        <td colspan="7" class="v" style="text-align:right">Subtotal (before tax)</td>
+                                        <td class="v">{{ ReservationView::fmtMoney($sumBase) }}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="7" class="v" style="text-align:right">Tax</td>
+                                        <td class="v">{{ ReservationView::fmtMoney($sumTax) }}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="7" class="v" style="text-align:right">TOTAL (Amount Due + Tax)</td>
+                                        <td class="v"><strong>{{ ReservationView::fmtMoney($sumGrand) }}</strong></td>
+                                        <td></td>
+                                    </tr>
+
+                                    {{-- ⬇️ BARU: pindahkan deposit & balance ke tfoot --}}
+                                    @php
+                                        $dep = (int) ($res?->deposit ?? 0);
+                                        $bal = max(0, $sumGrand - $dep);
+                                    @endphp
+                                    <tr>
+                                        <td colspan="7" class="v" style="text-align:right">(-) Deposit</td>
+                                        <td class="v">{{ ReservationView::fmtMoney(min($dep, $sumGrand)) }}</td>
+                                        <td></td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="7" class="v" style="text-align:right">BALANCE DUE</td>
+                                        <td class="v"><strong>{{ ReservationView::fmtMoney($bal) }}</strong></td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+
                             </table>
                         </div>
                     </div>
@@ -251,7 +319,7 @@
                     </div>
 
                     <div class="card">
-                        <div class="title">Guest Information</div>
+                        <div class="title">Detail Guest Information</div>
                         <div class="rows">
                             <div class="row"><div class="k">Name</div><div>{{ $guest?->display_name ?? ($guest?->name ?? '-') }}</div></div>
                             <div class="row"><div class="k">Address</div><div>{{ $guest?->address ?? '-' }}</div></div>
@@ -277,6 +345,7 @@
                             </div>
                             <div class="row"><div class="k">Extra Bed</div><div>{{ $extraQty > 0 ? $extraQty . ' — ' . $money($extraSub) : '-' }}</div></div>
                         </div>
+                        {{-- ⬅️ Tidak ada tax di sini --}}
                     </div>
                 </div>
 
@@ -313,18 +382,13 @@
                                 @if ($penaltyRp > 0)
                                     <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
                                 @endif
-                                <tr><td class="k">Tax {{ number_format($taxPct, 2, ',', '.') }}%</td><td class="v">{{ $money($taxRp) }}</td></tr>
+                                {{-- ❌ Tax tidak ditampilkan di sini --}}
                             </table>
+                            {{-- SUBTOTAL (tanpa tax) --}}
                             <div class="total">
-                                <div>RATE ++</div>
-                                <div>{{ $money($grand) }}</div>
+                                <div>SUBTOTAL (before tax)</div>
+                                <div>{{ $money($taxBase) }}</div>
                             </div>
-                            @if ($deposit > 0)
-                                <table class="table">
-                                    <tr><td class="k">(-) Deposit</td><td class="v">{{ $money($deposit) }}</td></tr>
-                                    <tr><td class="k"><strong>Amount Due</strong></td><td class="v"><strong>{{ $money($due) }}</strong></td></tr>
-                                </table>
-                            @endif
                         </div>
                     </div>
                 </div>

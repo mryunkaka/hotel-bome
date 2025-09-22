@@ -27,6 +27,8 @@
             ]),
         );
 
+        $depositHeader = (float) ($reservation?->deposit ?? 0);
+
         $row = $row ?? [];
         $actualIn = $row['actual_in'] ?? null;
         $actualOut = $row['actual_out'] ?? ($row['expected_out'] ?? null);
@@ -110,28 +112,6 @@
                 }
             }
 
-            // tax dari subtotal bersih
-            $net = array_reduce($entries, fn($c, $e) => $c + $e['debit'] - $e['credit'], 0.0);
-            if ($taxPct > 0 && $net > 0) {
-                $taxRp = round(($net * $taxPct) / 100);
-                $entries[] = [
-                    'date' => $actualOut ? Carbon::parse($actualOut)->toDateString() : now()->toDateString(),
-                    'desc' => 'TAX ' . number_format($taxPct, 2, ',', '.') . '%',
-                    'debit' => $taxRp,
-                    'credit' => 0,
-                ];
-            }
-
-            // deposit reservation sebagai credit
-            $deposit = (float) ($reservation?->deposit ?? 0);
-            if ($deposit > 0) {
-                $entries[] = [
-                    'date' => $reservation?->entry_date?->toDateString() ?? now()->toDateString(),
-                    'desc' => 'DEPOSIT',
-                    'debit' => 0,
-                    'credit' => $deposit,
-                ];
-            }
         }
 
         usort($entries, fn($a, $b) => strcmp($a['date'], $b['date']));
@@ -367,6 +347,9 @@
             margin-top: 26px;
             padding-top: 4px;
         }
+
+        /* small helper */
+        .note { font-size: 8px; color:#6b7280; line-height: 1.3; }
     </style>
 </head>
 
@@ -381,6 +364,11 @@
             <td class="mid">
                 <div class="title">GUEST FOLIO</div>
                 <div class="sub">{{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</div>
+                @if ($depositHeader > 0)
+                    <div class="note" style="margin-top:2px">
+                        Deposit: <strong>{{ $m($depositHeader) }}</strong>
+                    </div>
+                @endif
             </td>
             <td class="right">
                 <div class="hotel-meta">{!! !empty($hotelRight) ? implode('<br>', array_map('e', $hotelRight)) : '&nbsp;' !!}</div>
@@ -425,7 +413,10 @@
             <td></td>
             <td class="lbl">Rate</td>
             <td class="colon">:</td>
-            <td>{{ $m($rate) }}</td>
+            <td>
+                <div>{{ $m($rate) }}</div>
+                <div class="note">Rates exclude tax (if applicable).</div>
+            </td>
         </tr>
     </table>
 

@@ -178,52 +178,52 @@ class ReservationForm
             // ===========================
             // Reserved By (sederhana)
             // ===========================
+
             Section::make('Reserved By')
                 ->schema([
                     Grid::make(12)
                         ->extraAttributes([
-                            // State kecil di sisi klien (tidak pakai Livewire)
-                            'x-data' => '{ by: "GUEST" }',
-                            // Saat halaman pertama kali render (create/edit), ambil radio yang sudah tercentang
-                            'x-init' => 'const r=$el.querySelector(\'input[name=\\\'data[reserved_by_type]\\\']:checked\'); if(r){ by=r.value }',
+                            // Alpine state lokal, tanpa round-trip Livewire
+                            'x-data' => <<<'ALPINE'
+                            {
+                                by: 'GUEST',
+                                init() {
+                                    this.$nextTick(() => {
+                                        const r = this.$el.querySelector('input[name=\'data[reserved_by_type]\']:checked');
+                                        this.by = r ? r.value : this.by; // 'GROUP' saat edit, 'GUEST' saat create
+                                    });
+                                }
+                            }
+                            ALPINE,
                         ])
                         ->schema([
                             Radio::make('reserved_by_type')
                                 ->label('Reserved By Type')
                                 ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
                                 ->default('GUEST')
-                                // Ubah state Alpine tanpa round-trip
                                 ->extraAttributes([
-                                    'x-on:change' => 'by = $event.target.value',
+                                    'x-on:change' => 'by = $event.target.value', // cepat, murni JS
                                 ])
                                 ->columnSpan(12),
 
-                            // ===== BLOK GUEST =====
+                            // === BLOK GUEST (dibungkus supaya seluruhnya bisa disembunyikan ringan) ===
                             Group::make()
-                                // Server-side: pastikan saat edit langsung benar
-                                ->hidden(fn(Get $get) => ($get('reserved_by_type') ?? 'GUEST') !== 'GUEST')
-                                // Client-side: toggle instan tanpa reload
                                 ->extraAttributes([
                                     'x-show'  => "by === 'GUEST'",
-                                    'x-cloak' => '',
+                                    'x-cloak' => '', // cegah flicker saat load
                                 ])
                                 ->schema([
                                     \Filament\Forms\Components\Select::make('guest_id')
                                         ->label('Guest')
                                         ->native(false)
                                         ->searchable()
+                                        // Validasi server tetap aman dan ringan
                                         ->rules(['required_without:group_id'])
-                                        // Saat bukan mode GUEST, field ringan & tidak dikirim
-                                        ->dehydrated(fn(Get $get) => ($get('reserved_by_type') ?? 'GUEST') === 'GUEST')
-                                        ->extraAttributes([
-                                            'x-bind:disabled' => "by !== 'GUEST'",
-                                            'x-bind:required' => "by === 'GUEST'",
-                                        ])
+                                        // Opsi: exclude tamu yang sedang menginap (checkin != null & checkout == null)
                                         ->options(function () {
                                             $hid = \Illuminate\Support\Facades\Session::get('active_hotel_id')
                                                 ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
 
-                                            // Exclude tamu yang sedang menginap (check-in ada, check-out kosong)
                                             $rows = \App\Models\Guest::query()
                                                 ->where('hotel_id', $hid)
                                                 ->whereNotExists(function ($sub) use ($hid) {
@@ -233,7 +233,8 @@ class ReservationForm
                                                         ->whereNotNull('rg.actual_checkin')
                                                         ->whereNull('rg.actual_checkout');
                                                 })
-                                                ->orderBy('name')->limit(200)
+                                                ->orderBy('name')
+                                                ->limit(200)
                                                 ->get(['id', 'name', 'id_card']);
 
                                             return $rows->mapWithKeys(function ($g) {
@@ -261,7 +262,8 @@ class ReservationForm
                                                         ->whereNotNull('rg.actual_checkin')
                                                         ->whereNull('rg.actual_checkout');
                                                 })
-                                                ->orderBy('name')->limit(50)
+                                                ->orderBy('name')
+                                                ->limit(50)
                                                 ->get(['id', 'name', 'id_card']);
 
                                             return $rows->mapWithKeys(function ($g) {
@@ -279,11 +281,15 @@ class ReservationForm
                                         ->createOptionForm([
                                             \Filament\Schemas\Components\Section::make('Guest Info')->schema([
                                                 \Filament\Schemas\Components\Grid::make(12)->schema([
-                                                    \Filament\Forms\Components\Select::make('salutation')->label('Title')
-                                                        ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])->native(false)->columnSpan(3),
+                                                    \Filament\Forms\Components\Select::make('salutation')
+                                                        ->label('Title')
+                                                        ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
+                                                        ->native(false)->columnSpan(3),
                                                     \Filament\Forms\Components\TextInput::make('name')->label('Name')->required()->maxLength(150)->columnSpan(9),
-                                                    \Filament\Forms\Components\Select::make('guest_type')->label('Guest Type')
-                                                        ->options(['DOMESTIC' => 'Domestic', 'INTERNATIONAL' => 'International'])->native(false)->columnSpan(4),
+                                                    \Filament\Forms\Components\Select::make('guest_type')
+                                                        ->label('Guest Type')
+                                                        ->options(['DOMESTIC' => 'Domestic', 'INTERNATIONAL' => 'International'])
+                                                        ->native(false)->columnSpan(4),
                                                     \Filament\Forms\Components\TextInput::make('nationality')->label('Nationality')->maxLength(50)->columnSpan(4),
                                                     \Filament\Forms\Components\TextInput::make('address')->label('Address')->maxLength(255)->columnSpan(12),
                                                     \Filament\Forms\Components\TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
@@ -294,14 +300,15 @@ class ReservationForm
                                                         'DRIVER_LICENSE' => 'Driver License',
                                                         'OTHER' => 'Other',
                                                     ])->native(false)->columnSpan(4),
-                                                    \Filament\Forms\Components\TextInput::make('id_card')->label('Identity Number')->maxLength(100)
-                                                        ->rule('not_in:-')
+                                                    \Filament\Forms\Components\TextInput::make('id_card')
+                                                        ->label('Identity Number')->maxLength(100)->rule('not_in:-')
                                                         ->rules([
                                                             \Illuminate\Validation\Rule::unique('guests', 'id_card')
-                                                                ->where(fn($q) => $q->where('hotel_id', Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
+                                                                ->where(fn($q) => $q->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
                                                                     ->whereNull('deleted_at')),
                                                         ])->nullable()->columnSpan(6),
-                                                    \Filament\Forms\Components\FileUpload::make('id_card_file')->label('Attach ID (JPG/PNG/PDF)')
+                                                    \Filament\Forms\Components\FileUpload::make('id_card_file')
+                                                        ->label('Attach ID (JPG/PNG/PDF)')
                                                         ->directory('guests/id')->disk('public')
                                                         ->acceptedFileTypes(['image/jpeg', 'image/png', 'application/pdf'])
                                                         ->maxSize(4096)->downloadable()->openable()->columnSpan(6),
@@ -331,9 +338,8 @@ class ReservationForm
                                 ])
                                 ->columnSpan(12),
 
-                            // ===== BLOK GROUP =====
+                            // === BLOK GROUP ===
                             Group::make()
-                                ->hidden(fn(Get $get) => ($get('reserved_by_type') ?? 'GUEST') !== 'GROUP')
                                 ->extraAttributes([
                                     'x-show'  => "by === 'GROUP'",
                                     'x-cloak' => '',
@@ -343,22 +349,16 @@ class ReservationForm
                                         ->label('Group')
                                         ->native(false)
                                         ->searchable()
-                                        ->rules(['required_without:guest_id'])
-                                        ->dehydrated(fn(Get $get) => ($get('reserved_by_type') ?? 'GUEST') === 'GROUP')
-                                        ->extraAttributes([
-                                            'x-bind:disabled' => "by !== 'GROUP'",
-                                            'x-bind:required' => "by === 'GROUP'",
-                                        ])
                                         ->relationship(
                                             name: 'group',
                                             titleAttribute: 'name',
                                             modifyQueryUsing: function ($q) {
                                                 if (! $q instanceof \Illuminate\Database\Eloquent\Builder) return;
-                                                $hotelId = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                                    ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
+                                                $hotelId = \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
                                                 if ($hotelId) $q->where('hotel_id', $hotelId);
                                             }
                                         )
+                                        ->rules(['required_without:guest_id'])
                                         ->createOptionForm([
                                             \Filament\Forms\Components\TextInput::make('name')->label('Group Name')->required(),
                                             \Filament\Forms\Components\TextInput::make('address')->label('Address'),
@@ -368,8 +368,7 @@ class ReservationForm
                                             \Filament\Forms\Components\TextInput::make('handphone')->label('Handphone'),
                                             \Filament\Forms\Components\TextInput::make('email')->label('Email')->email(),
                                             \Filament\Forms\Components\Textarea::make('long_remark')->label('Remark')->rows(2),
-                                            \Filament\Forms\Components\Hidden::make('hotel_id')
-                                                ->default(fn() => \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id),
+                                            \Filament\Forms\Components\Hidden::make('hotel_id')->default(fn() => \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id),
                                             \Filament\Forms\Components\Hidden::make('created_by')->default(fn() => \Illuminate\Support\Facades\Auth::id()),
                                         ]),
                                 ])

@@ -43,7 +43,7 @@ class Reservation extends Model
         'checkin_date'      => 'datetime',
         'checkout_date'     => 'datetime',
         'entry_date'        => 'datetime',
-        'deposit'           => 'decimal:2',
+        'deposit'           => 'integer',
     ];
 
     public function getLengthOfStayAttribute(): ?int

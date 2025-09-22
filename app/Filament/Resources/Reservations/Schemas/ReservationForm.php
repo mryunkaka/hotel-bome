@@ -214,6 +214,7 @@ class ReservationForm
                                 ])
                                 ->schema([
                                     \Filament\Forms\Components\Select::make('guest_id')
+                                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
                                         ->label('Guest')
                                         ->native(false)
                                         ->searchable()
@@ -346,6 +347,7 @@ class ReservationForm
                                 ])
                                 ->schema([
                                     \Filament\Forms\Components\Select::make('group_id')
+                                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
                                         ->label('Group')
                                         ->native(false)
                                         ->searchable()

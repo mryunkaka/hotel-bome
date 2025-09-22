@@ -17,10 +17,31 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\ReservationGuest;
 use App\Support\ReservationMath;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\Request;
 
 Route::redirect('/', '/admin');
+
+Route::patch('/admin/rooms/{room}/quick-status', function (Request $request, Room $room) {
+    $validated = $request->validate([
+        'status' => 'required|in:' . implode(',', [
+            Room::ST_VC,
+            Room::ST_VCI,
+            Room::ST_VD,
+            Room::ST_OCC,
+            Room::ST_ED,
+            Room::ST_OOO,
+            Room::ST_HU,
+        ]),
+    ]);
+
+    $room->forceFill([
+        'status' => $request->input('status'), // ✅ bukan $request->status
+        'status_changed_at' => now(),
+    ])->save();
+
+    return back()->with('room-status-updated', true);
+})->name('rooms.quick-status')->middleware(['web', 'auth']);
 
 // === GUEST BILL: 1 route untuk HTML (?html=1) & PDF (default) ===
 Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest $guest) {
@@ -161,7 +182,6 @@ Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGu
         'Content-Disposition' => 'inline; filename="' . $filename . '"',
     ]);
 })->name('reservation-guests.bill.pdf');
-
 
 Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest $guest) {
     $reservation = $guest->reservation()
@@ -938,7 +958,6 @@ Route::get('/admin/users/preview-pdf', function () {
     ]);
 })->name('users.preview-pdf');
 
-
 Route::get('/admin/hotels/preview-pdf', function () {
     $hid   = (int) (session('active_hotel_id') ?? 0);
     $hotel = Hotel::find($hid); // dipakai untuk header logo/identitas
@@ -1483,7 +1502,6 @@ Route::get('/admin/account-ledgers/preview-pdf', function () {
         'Content-Disposition' => 'inline; filename="account-ledgers.pdf"',
     ]);
 })->name('account-ledgers.preview-pdf');
-
 
 if (! function_exists('buildPdfLogoData')) {
     function buildPdfLogoData(?string $hotelLogoPath): ?string

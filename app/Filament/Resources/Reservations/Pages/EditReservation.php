@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\Reservations\Pages;
 
+use Throwable;
 use App\Models\Room;
 use Filament\Actions\Action;
 use Illuminate\Support\Carbon;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\RestoreAction;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Filament\Actions\ForceDeleteAction;
 use Illuminate\Support\Facades\Session;
@@ -17,6 +19,20 @@ use App\Filament\Resources\Reservations\ReservationResource;
 class EditReservation extends EditRecord
 {
     protected static string $resource = ReservationResource::class;
+
+    protected function handleRecordCreation(array $data): \App\Models\Reservation
+    {
+        try {
+            return static::getModel()::create($data);
+        } catch (Throwable $e) {
+            Log::error('[Reservation][create-failed]', [
+                'message' => $e->getMessage(),
+                'data'    => $data,
+                'trace'   => collect($e->getTrace())->take(5),
+            ]);
+            throw $e; // biar Filament tetap munculkan error ke UI
+        }
+    }
 
     // Heading halaman
     public function getHeading(): string
@@ -151,6 +167,13 @@ class EditReservation extends EditRecord
             $data['reserved_number'],
             $data['reserved_title'],
         );
+
+        if (($data['reserved_by_type'] ?? 'GUEST') === 'GUEST') {
+            $data['group_id'] = null;
+        } else {
+            $data['guest_id'] = null;
+        }
+        return $data;
 
         return $data;
     }

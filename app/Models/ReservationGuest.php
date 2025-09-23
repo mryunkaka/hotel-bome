@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Carbon;         // TAMBAH
+use App\Models\Room;                   // TAMBAH
 
 class ReservationGuest extends Model
 {
@@ -38,8 +40,8 @@ class ReservationGuest extends Model
     ];
 
     protected $casts = [
-        'room_rate'         => 'decimal:2',   // string "100000.00" → pastikan cast ke float saat hitung
-        'discount_percent'  => 'decimal:2',   // tambahkan cast supaya ada nilai default numeric
+        'room_rate'         => 'decimal:2',
+        'discount_percent'  => 'decimal:2',
         'expected_checkin'  => 'datetime',
         'expected_checkout' => 'datetime',
         'actual_checkin'    => 'datetime',
@@ -137,11 +139,12 @@ class ReservationGuest extends Model
 
     /*
     |--------------------------------------------------------------------------
-    | Booted
+    | Booted (event hooks)
     |--------------------------------------------------------------------------
     */
     protected static function booted(): void
     {
+        // Sudah ada di aslimu → tetap dipertahankan
         static::creating(function (self $m): void {
             $m->hotel_id = Session::get('active_hotel_id')
                 ?? Auth::user()?->hotel_id
@@ -152,6 +155,110 @@ class ReservationGuest extends Model
             $m->hotel_id = Session::get('active_hotel_id')
                 ?? Auth::user()?->hotel_id
                 ?? $m->hotel_id;
+
+            // Jika pindah kamar, pulihkan status kamar lama (jika tidak ada tamu aktif lain)
+            if ($m->isDirty('room_id')) {
+                $oldRoomId = $m->getOriginal('room_id');
+                if ($oldRoomId) {
+                    // Jangan set VC kalau masih ada tamu aktif lain di kamar lama
+                    if (! self::roomHasOtherActiveGuests($oldRoomId, $m->getKey())) {
+                        Room::find($oldRoomId)?->setStatus(Room::ST_VC);
+                    }
+                }
+            }
         });
+
+        // === TAMBAHAN: sinkron saat created/updated/deleted ===
+
+        static::created(function (self $m): void {
+            self::syncRoomStatus($m);
+        });
+
+        static::updated(function (self $m): void {
+            self::syncRoomStatus($m);
+        });
+
+        static::deleted(function (self $m): void {
+            // Saat baris RG dihapus → kalau tidak ada tamu aktif lain di kamar tsb, set VC
+            if ($m->room_id && ! self::roomHasOtherActiveGuests($m->room_id, $m->getKey())) {
+                Room::find($m->room_id)?->setStatus(Room::ST_VC);
+            }
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Helpers sinkronisasi status kamar
+    |--------------------------------------------------------------------------
+    */
+
+    /** Apakah di kamar ini ada tamu aktif lain ( selain RG saat ini )? */
+    protected static function roomHasOtherActiveGuests(int $roomId, ?int $exceptRgId = null): bool
+    {
+        return static::query()
+            ->where('room_id', $roomId)
+            ->when($exceptRgId, fn($q) => $q->where('id', '!=', $exceptRgId))
+            ->whereNotNull('actual_checkin')
+            ->whereNull('actual_checkout')
+            ->exists();
+    }
+
+    /** Hitung rencana jumlah malam (untuk deteksi Long Stay) */
+    protected static function plannedNights(self $rg): ?int
+    {
+        $start = $rg->expected_checkin ? Carbon::parse($rg->expected_checkin) : null;
+        $end   = $rg->expected_checkout ? Carbon::parse($rg->expected_checkout) : null;
+
+        if (! $start || ! $end) {
+            return null;
+        }
+
+        return max(1, $start->startOfDay()->diffInDays($end->startOfDay()));
+    }
+
+    /** Sinkronkan status Room berdasar kondisi RG ini */
+    // App\Models\ReservationGuest.php
+
+    protected static function syncRoomStatus(self $rg): void
+    {
+        if (! $rg->room_id) return;
+
+        $room = \App\Models\Room::find($rg->room_id);
+        if (! $room) return;
+
+        // 1) Checkout → VD (jika tidak ada tamu aktif lain)
+        if ($rg->actual_checkout) {
+            if (! self::roomHasOtherActiveGuests($room->id, $rg->getKey())) {
+                $room->setStatus(\App\Models\Room::ST_VD);
+            }
+            return;
+        }
+
+        // 2) Sudah check-in & belum checkout → OCC / LS
+        if ($rg->actual_checkin && ! $rg->actual_checkout) {
+            $nights    = self::plannedNights($rg);
+            $threshold = (int) config('hotel.long_stay_nights', 7);
+            $status    = ($nights !== null && $nights >= $threshold)
+                ? \App\Models\Room::ST_LS
+                : \App\Models\Room::ST_OCC;
+
+            $room->setStatus($status);
+            return;
+        }
+
+        // 3) Belum check-in (baru dipesan/di-assign) → RS (Reserved)
+        //    Hanya set RS jika tidak ada tamu aktif lain di kamar tsb.
+        if (! self::roomHasOtherActiveGuests($room->id, $rg->getKey())) {
+            $room->setStatus(\App\Models\Room::ST_RS);
+        }
+
+        // 4) Opsional ED: hanya untuk yang sudah in-house (hindari menandai ED saat belum check-in)
+        if ($rg->actual_checkin && $rg->expected_checkout && ! $rg->actual_checkout) {
+            if (\Illuminate\Support\Carbon::parse($rg->expected_checkout)->isToday()) {
+                if (! self::roomHasOtherActiveGuests($room->id, $rg->getKey())) {
+                    $room->setStatus(\App\Models\Room::ST_ED);
+                }
+            }
+        }
     }
 }

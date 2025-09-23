@@ -3,6 +3,8 @@
 
     $mapCodeToLabel = fn(string $code) => match ($code) {
         Room::ST_OCC => 'occupied',
+        Room::ST_LS  => 'long_stay',   // TAMBAH
+        Room::ST_RS  => 'reserved',    // TAMBAH
         Room::ST_ED  => 'exp_dep',
         Room::ST_VC  => 'vacant_clean',
         Room::ST_VD  => 'vacant_dirty',
@@ -14,6 +16,8 @@
 
     $rightBadge = fn(string $code) => match ($code) {
         Room::ST_OCC => 'OCC',
+        Room::ST_LS  => 'LS',   // TAMBAH
+        Room::ST_RS  => 'RS',   // TAMBAH
         Room::ST_ED  => 'ED',
         Room::ST_VCI => 'VCI',
         default       => '',
@@ -29,13 +33,15 @@
 .rb-head{background:#f3f4f6;padding:6px 10px;font:700 10px/1 system-ui,Arial;display:flex;justify-content:space-between;align-items:center;letter-spacing:.2px}
 .rb-badge{font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.15);color:#111}
 .rb-badge.muted{opacity:.35}
-.rb-tile{height:110px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
-.rb-num{font-size:36px;font-weight:900;line-height:1;letter-spacing:.4px;text-shadow:0 1px 0 rgba(0,0,0,.15)}
+.rb-tile{height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
+.rb-num{font-size:40px;font-weight:900;line-height:1;letter-spacing:.4px;text-shadow:0 1px 0 rgba(0,0,0,.15)}
 .rb-guest{margin-top:6px;font-size:11px;text-transform:uppercase;font-weight:800;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;padding:0 8px}
 /* ===== Warna status (VC ≠ VCI) ===== */
 .tile--vc   {background:#1E88E5; color:#fff;}        /* Vacant Clean → biru solid */
 .tile--vci  {background:#FDE047; color:#111;}        /* VC Inspection → kuning terang */
 .tile--occ  {background:#6C2AB2; color:#fff;}        /* Occupied → ungu */
+.tile--ls   {background:#EF4444; color:#fff;}        /* Long Stay → merah */          /* TAMBAH */
+.tile--rs   {background:#0D9488; color:#fff;}        /* Reserved → teal */            /* TAMBAH */
 .tile--ed   {background:#22C55E; color:#fff;}        /* Exp Dep → hijau */
 .tile--vd   {background:#93C5FD; color:#111;}        /* Vacant Dirty → biru muda */
 .tile--hu   {background:#F59E0B; color:#111;}        /* House Use → oranye */
@@ -52,10 +58,26 @@
 /* ===== Header papan ===== */
 .rb-board-title{font:900 14px/1.2 system-ui,Arial;text-align:center;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;margin-bottom:10px}
 /* ===== Grid kamar ===== */
-.rb-grid{display:grid;gap:.75rem;grid-template-columns:repeat(2,minmax(0,1fr))}
-@media (min-width:640px){.rb-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (min-width:768px){.rb-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media (min-width:1280px){.rb-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+/* ===== Grid kamar: kunci 5 kolom di desktop ===== */
+.rb-grid{
+  display:grid;
+  gap:.9rem; /* sedikit diperlebar */
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+@media (min-width:640px){  /* sm */
+  .rb-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+}
+@media (min-width:768px){  /* md */
+  .rb-grid{grid-template-columns:repeat(4,minmax(0,1fr));}
+}
+@media (min-width:1024px){ /* lg */
+  .rb-grid{grid-template-columns:repeat(5,minmax(0,1fr));}
+}
+/* KUNCI tetap 5 kolom di resolusi lebih besar */
+@media (min-width:1280px){
+  .rb-grid{grid-template-columns:repeat(5,minmax(0,1fr));}
+}
+
 /* Hover & focus state */
 .rb-card:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(2,6,23,.08);transition:.15s}
 .rb-tile .cta{opacity:0;position:absolute;inset:auto 8px 8px auto;background:rgba(255,255,255,.2);backdrop-filter:blur(2px);color:#111;border-radius:6px;padding:2px 6px;font:800 10px/1 system-ui}
@@ -87,13 +109,14 @@
 
         <div class="rb-legend">
             <div class="rb-leg"><span class="rb-dot" style="background:#6C2AB2"></span> Occupied <span class="rb-count">{{ $stats['occupied'] ?? 0 }}</span></div>
+            <div class="rb-leg"><span class="rb-dot" style="background:#EF4444"></span> Long Stay <span class="rb-count">{{ $stats['long_stay'] ?? 0 }}</span></div> <!-- PINDAH NAIK biar dekat OCC -->
+            <div class="rb-leg"><span class="rb-dot" style="background:#0D9488"></span> Reserved <span class="rb-count">{{ $stats['reserved'] ?? 0 }}</span></div>    <!-- TAMBAH -->
             <div class="rb-leg"><span class="rb-dot" style="background:#22C55E"></span> Exp Departure <span class="rb-count">{{ $stats['exp_dep'] ?? 0 }}</span></div>
             <div class="rb-leg"><span class="rb-dot" style="background:#1E88E5"></span> Vacant Clean <span class="rb-count">{{ $stats['vacant_clean'] ?? 0 }}</span></div>
             <div class="rb-leg"><span class="rb-dot" style="background:#FDE047"></span> VC Inspection <span class="rb-count">{{ $stats['inspection'] ?? 0 }}</span></div>
             <div class="rb-leg"><span class="rb-dot" style="background:#93C5FD"></span> Vacant Dirty <span class="rb-count">{{ $stats['vacant_dirty'] ?? 0 }}</span></div>
             <div class="rb-leg"><span class="rb-dot" style="background:#F59E0B"></span> House Use <span class="rb-count">{{ $stats['house_use'] ?? 0 }}</span></div>
             <div class="rb-leg"><span class="rb-dot" style="background:#6B7280"></span> Out of Order <span class="rb-count">{{ $stats['oo'] ?? 0 }}</span></div>
-            <div class="rb-leg"><span class="rb-dot" style="background:#EF4444"></span> Long Stay <span class="rb-count">{{ $stats['long_stay'] ?? 0 }}</span></div>
         </div>
 
         <div class="mt-3 rb-btn" style="justify-content:space-between;">
@@ -111,6 +134,8 @@
                     $label  = $mapCodeToLabel($code);
                     $tile   = match ($label) {
                         'occupied'     => 'tile--occ',
+                        'long_stay'    => 'tile--ls',   // TAMBAH
+                        'reserved'     => 'tile--rs',   // TAMBAH
                         'exp_dep'      => 'tile--ed',
                         'vacant_clean' => 'tile--vc',
                         'inspection'   => 'tile--vci',
@@ -156,7 +181,7 @@
                     <div class="rb-tile {{ $tile }}">
                         <button type="button" class="tile-link" @click="open = true" aria-label="Open room {{ $roomNo }}">
                             <div class="rb-num">{{ $roomNo }}</div>
-                            <div class="rb-code">{{ $code }}</div>
+                            {{-- <div class="rb-code">{{ $code }}</div> --}}
                             <span class="cta">Open</span>
                         </button>
                     </div>
@@ -186,6 +211,8 @@
                                         @php
                                             $opts = [
                                                 \App\Models\Room::ST_OCC => 'Occupied (OCC)',
+                                                \App\Models\Room::ST_LS  => 'Long Stay (LS)',        // TAMBAH
+                                                \App\Models\Room::ST_RS  => 'Reserved (RS)',         // TAMBAH
                                                 \App\Models\Room::ST_ED  => 'Expected Departure (ED)',
                                                 \App\Models\Room::ST_VC  => 'Vacant Clean (VC)',
                                                 \App\Models\Room::ST_VCI => 'VC Inspection (VCI)',

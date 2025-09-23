@@ -98,21 +98,9 @@ class Reservation extends Model
     */
     protected static function booted(): void
     {
-        static::creating(function (self $m) {
-            Log::info('[ReservationGuest][creating]', $m->getAttributes());
-        });
+        static::created(fn(self $r) => $r->syncRoomStatuses());
+        static::updated(fn(self $r) => $r->syncRoomStatuses());
 
-        static::updating(function (self $m) {
-            Log::info('[ReservationGuest][updating]', $m->getDirty());
-        });
-
-        static::created(function (self $m) {
-            Log::info('[ReservationGuest][created]', $m->fresh()?->toArray() ?? []);
-        });
-
-        static::updated(function (self $m) {
-            Log::info('[ReservationGuest][updated]', $m->fresh()?->toArray() ?? []);
-        });
         // Kunci ke hotel konteks aktif (super admin via session, user biasa via hotel_id)
         static::creating(function (self $m): void {
             $m->hotel_id = Session::get('active_hotel_id')
@@ -125,6 +113,13 @@ class Reservation extends Model
                 ?? Auth::user()?->hotel_id
                 ?? $m->hotel_id;
         });
+    }
+
+    public function syncRoomStatuses(): void
+    {
+        foreach ($this->reservationGuests as $rg) {
+            \App\Models\ReservationGuest::syncRoomStatus($rg);
+        }
     }
 
     // Alias agar Repeater::relationship('reservationGuests') bekerja

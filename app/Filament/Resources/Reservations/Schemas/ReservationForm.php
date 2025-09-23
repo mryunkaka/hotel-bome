@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use App\Models\ReservationGuest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Filament\Forms\Components\Radio;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -40,7 +41,7 @@ class ReservationForm
     {
         return $schema->components([
             // ===========================
-            // Reservation Info (sederhana)
+            // Reservation Info
             // ===========================
             Section::make('Reservation Info')
                 ->schema([
@@ -122,15 +123,15 @@ class ReservationForm
                 ->columnSpanFull(),
 
             // ===========================
-            // Information (readonly ringkas)
+            // Information
             // ===========================
             Section::make('Information')
                 ->schema([
                     Grid::make(12)->schema([
                         Select::make('created_by')
                             ->label('Entry By')
-                            ->relationship('creator', 'name')   // relasi di model: creator()
-                            ->default(fn() => Auth::id())      // agar saat Create tampil nama user aktif
+                            ->relationship('creator', 'name')
+                            ->default(fn() => Auth::id())
                             ->disabled()
                             ->dehydrated(false)
                             ->columnSpan(6),
@@ -144,7 +145,7 @@ class ReservationForm
                         DateTimePicker::make('expected_arrival')
                             ->label('Arrival')
                             ->required()
-                            ->default(fn() => now()->setTime(12, 0)) // 12:00 siang
+                            ->default(fn() => now()->setTime(12, 0))
                             ->seconds(false)
                             ->columnSpan(5),
 
@@ -156,7 +157,6 @@ class ReservationForm
                             ->required()
                             ->columnSpan(3),
 
-                        // === Tax (global di reservations) dipindah ke atas ===
                         Select::make('id_tax')
                             ->label('Tax')
                             ->placeholder('Select')
@@ -176,502 +176,305 @@ class ReservationForm
                 ]),
 
             // ===========================
-            // Reserved By (sederhana)
+            // Reserved By
             // ===========================
-
             Section::make('Reserved By')
                 ->schema([
-                    Grid::make(12)
-                        ->extraAttributes([
-                            // Alpine state lokal, tanpa round-trip Livewire
-                            'x-data' => <<<'ALPINE'
-                            {
-                                by: 'GUEST',
-                                init() {
-                                    this.$nextTick(() => {
-                                        const r = this.$el.querySelector('input[name=\'data[reserved_by_type]\']:checked');
-                                        this.by = r ? r.value : this.by; // 'GROUP' saat edit, 'GUEST' saat create
-                                    });
-                                }
-                            }
-                            ALPINE,
-                        ])
-                        ->schema([
-                            Radio::make('reserved_by_type')
-                                ->label('Reserved By Type')
-                                ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
-                                ->default('GUEST')
-                                ->extraAttributes([
-                                    'x-on:change' => 'by = $event.target.value', // cepat, murni JS
-                                ])
-                                ->columnSpan(12),
+                    Grid::make(12)->schema([
+                        Radio::make('reserved_by_type')
+                            ->label('Reserved By Type')
+                            ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
+                            ->default('GUEST')
+                            ->live()
+                            ->columnSpan(12),
 
-                            // === BLOK GUEST (dibungkus supaya seluruhnya bisa disembunyikan ringan) ===
-                            Group::make()
-                                ->extraAttributes([
-                                    'x-show'  => "by === 'GUEST'",
-                                    'x-cloak' => '', // cegah flicker saat load
-                                ])
-                                ->schema([
-                                    \Filament\Forms\Components\Select::make('guest_id')
-                                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
-                                        ->label('Guest')
-                                        ->native(false)
-                                        ->searchable()
-                                        // Validasi server tetap aman dan ringan
-                                        ->rules(['required_without:group_id'])
-                                        // Opsi: exclude tamu yang sedang menginap (checkin != null & checkout == null)
-                                        ->options(function () {
-                                            $hid = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                                ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
+                        // GUEST Section
+                        Select::make('guest_id')
+                            ->required(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
+                            ->visible(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
+                            ->live()
+                            ->label('Guest')
+                            ->native(false)
+                            ->searchable()
+                            ->options(function () {
+                                $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                $rows = \App\Models\Guest::query()
+                                    ->where('hotel_id', $hid)
+                                    ->whereNotExists(function ($sub) use ($hid) {
+                                        $sub->from('reservation_guests as rg')
+                                            ->whereColumn('rg.guest_id', 'guests.id')
+                                            ->where('rg.hotel_id', $hid)
+                                            ->whereNotNull('rg.actual_checkin')
+                                            ->whereNull('rg.actual_checkout');
+                                    })
+                                    ->orderBy('name')
+                                    ->limit(200)
+                                    ->get(['id', 'name', 'id_card']);
 
-                                            $rows = \App\Models\Guest::query()
-                                                ->where('hotel_id', $hid)
-                                                ->whereNotExists(function ($sub) use ($hid) {
-                                                    $sub->from('reservation_guests as rg')
-                                                        ->whereColumn('rg.guest_id', 'guests.id')
-                                                        ->where('rg.hotel_id', $hid)
-                                                        ->whereNotNull('rg.actual_checkin')
-                                                        ->whereNull('rg.actual_checkout');
-                                                })
-                                                ->orderBy('name')
-                                                ->limit(200)
-                                                ->get(['id', 'name', 'id_card']);
+                                return $rows->mapWithKeys(function ($g) {
+                                    $idCard = trim((string) ($g->id_card ?? ''));
+                                    $label = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                    return [$g->id => $label];
+                                })->toArray();
+                            })
+                            ->createOptionForm([
+                                Section::make('Guest Info')->schema([
+                                    Grid::make(12)->schema([
+                                        Select::make('salutation')->label('Title')
+                                            ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
+                                            ->native(false)->columnSpan(3),
+                                        TextInput::make('name')->label('Name')->required()->maxLength(150)->columnSpan(9),
+                                        Select::make('guest_type')->label('Guest Type')
+                                            ->options(['DOMESTIC' => 'Domestic', 'INTERNATIONAL' => 'International'])
+                                            ->native(false)->columnSpan(4),
+                                        TextInput::make('nationality')->label('Nationality')->maxLength(50)->columnSpan(4),
+                                        TextInput::make('address')->label('Address')->maxLength(255)->columnSpan(12),
+                                        TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
+                                        TextInput::make('profession')->label('Profession')->maxLength(50)->columnSpan(4),
+                                        Select::make('id_type')->label('Identity Type')->options([
+                                            'ID' => 'National ID',
+                                            'PASSPORT' => 'Passport',
+                                            'DRIVER_LICENSE' => 'Driver License',
+                                            'OTHER' => 'Other',
+                                        ])->native(false)->columnSpan(4),
+                                        TextInput::make('id_card')->label('Identity Number')->maxLength(100)->columnSpan(6),
+                                        TextInput::make('phone')->label('Phone No')->maxLength(50)->columnSpan(6),
+                                        TextInput::make('email')->label('Email')->email()->maxLength(150)->columnSpan(6),
+                                        Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
+                                    ]),
+                                ]),
+                            ])
+                            ->createOptionUsing(fn(array $data) => \App\Models\Guest::create($data)->id)
+                            ->columnSpan(12),
 
-                                            return $rows->mapWithKeys(function ($g) {
-                                                $idCard = trim((string) ($g->id_card ?? ''));
-                                                $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
-                                                return [$g->id => $label];
-                                            })->toArray();
-                                        })
-                                        ->getSearchResultsUsing(function (string $search) {
-                                            $hid = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                                ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                            $s   = trim(preg_replace('/\s+/', ' ', $search));
-
-                                            $rows = \App\Models\Guest::query()
-                                                ->where('hotel_id', $hid)
-                                                ->where(function ($q) use ($s) {
-                                                    $q->where('name', 'like', "%{$s}%")
-                                                        ->orWhere('phone', 'like', "%{$s}%")
-                                                        ->orWhere('id_card', 'like', "%{$s}%");
-                                                })
-                                                ->whereNotExists(function ($sub) use ($hid) {
-                                                    $sub->from('reservation_guests as rg')
-                                                        ->whereColumn('rg.guest_id', 'guests.id')
-                                                        ->where('rg.hotel_id', $hid)
-                                                        ->whereNotNull('rg.actual_checkin')
-                                                        ->whereNull('rg.actual_checkout');
-                                                })
-                                                ->orderBy('name')
-                                                ->limit(50)
-                                                ->get(['id', 'name', 'id_card']);
-
-                                            return $rows->mapWithKeys(function ($g) {
-                                                $idCard = trim((string) ($g->id_card ?? ''));
-                                                $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
-                                                return [$g->id => $label];
-                                            })->toArray();
-                                        })
-                                        ->getOptionLabelUsing(function ($value) {
-                                            $g = \App\Models\Guest::query()->select(['name', 'id_card'])->find($value);
-                                            if (! $g) return null;
-                                            $idCard = trim((string) ($g->id_card ?? ''));
-                                            return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
-                                        })
-                                        ->createOptionForm([
-                                            \Filament\Schemas\Components\Section::make('Guest Info')->schema([
-                                                \Filament\Schemas\Components\Grid::make(12)->schema([
-                                                    \Filament\Forms\Components\Select::make('salutation')
-                                                        ->label('Title')
-                                                        ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
-                                                        ->native(false)->columnSpan(3),
-                                                    \Filament\Forms\Components\TextInput::make('name')->label('Name')->required()->maxLength(150)->columnSpan(9),
-                                                    \Filament\Forms\Components\Select::make('guest_type')
-                                                        ->label('Guest Type')
-                                                        ->options(['DOMESTIC' => 'Domestic', 'INTERNATIONAL' => 'International'])
-                                                        ->native(false)->columnSpan(4),
-                                                    \Filament\Forms\Components\TextInput::make('nationality')->label('Nationality')->maxLength(50)->columnSpan(4),
-                                                    \Filament\Forms\Components\TextInput::make('address')->label('Address')->maxLength(255)->columnSpan(12),
-                                                    \Filament\Forms\Components\TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
-                                                    \Filament\Forms\Components\TextInput::make('profession')->label('Profession')->maxLength(50)->columnSpan(4),
-                                                    \Filament\Forms\Components\Select::make('id_type')->label('Identity Type')->options([
-                                                        'ID' => 'National ID',
-                                                        'PASSPORT' => 'Passport',
-                                                        'DRIVER_LICENSE' => 'Driver License',
-                                                        'OTHER' => 'Other',
-                                                    ])->native(false)->columnSpan(4),
-                                                    \Filament\Forms\Components\TextInput::make('id_card')
-                                                        ->label('Identity Number')->maxLength(100)->rule('not_in:-')
-                                                        ->rules([
-                                                            \Illuminate\Validation\Rule::unique('guests', 'id_card')
-                                                                ->where(fn($q) => $q->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                    ->whereNull('deleted_at')),
-                                                        ])->nullable()->columnSpan(6),
-                                                    \Filament\Forms\Components\FileUpload::make('id_card_file')
-                                                        ->label('Attach ID (JPG/PNG/PDF)')
-                                                        ->directory('guests/id')->disk('public')
-                                                        ->acceptedFileTypes(['image/jpeg', 'image/png', 'application/pdf'])
-                                                        ->maxSize(4096)->downloadable()->openable()->columnSpan(6),
-                                                    \Filament\Forms\Components\TextInput::make('issued_place')->label('Issued Place')->maxLength(100)->columnSpan(6),
-                                                    \Filament\Forms\Components\DatePicker::make('issued_date')->label('Issued Date')->native(false)->columnSpan(6),
-                                                    \Filament\Forms\Components\TextInput::make('birth_place')->label('Birth Place')->maxLength(50)->columnSpan(6),
-                                                    \Filament\Forms\Components\DatePicker::make('birth_date')->label('Birth Date')->native(false)->columnSpan(6),
-                                                    \Filament\Forms\Components\TextInput::make('phone')->label('Phone No')->maxLength(50)
-                                                        ->rule('regex:/^\\+?\\d{6,20}$/')
-                                                        ->rules([
-                                                            \Illuminate\Validation\Rule::unique('guests', 'phone')
-                                                                ->where(fn($q) => $q->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                    ->whereNull('deleted_at')),
-                                                        ])->nullable()->columnSpan(6),
-                                                    \Filament\Forms\Components\TextInput::make('email')->label('Email')->email()->maxLength(150)
-                                                        ->rules([
-                                                            \Illuminate\Validation\Rule::unique('guests', 'email')
-                                                                ->where(fn($q) => $q->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                    ->whereNull('deleted_at')),
-                                                        ])->nullable()->columnSpan(6),
-                                                    \Filament\Forms\Components\Hidden::make('hotel_id')
-                                                        ->default(fn() => \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id),
-                                                ]),
-                                            ]),
-                                        ])
-                                        ->createOptionUsing(fn(array $data) => \App\Models\Guest::create($data)->id),
-                                ])
-                                ->columnSpan(12),
-
-                            // === BLOK GROUP ===
-                            Group::make()
-                                ->extraAttributes([
-                                    'x-show'  => "by === 'GROUP'",
-                                    'x-cloak' => '',
-                                ])
-                                ->schema([
-                                    \Filament\Forms\Components\Select::make('group_id')
-                                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
-                                        ->label('Group')
-                                        ->native(false)
-                                        ->searchable()
-                                        ->relationship(
-                                            name: 'group',
-                                            titleAttribute: 'name',
-                                            modifyQueryUsing: function ($q) {
-                                                if (! $q instanceof \Illuminate\Database\Eloquent\Builder) return;
-                                                $hotelId = \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                                if ($hotelId) $q->where('hotel_id', $hotelId);
-                                            }
-                                        )
-                                        ->rules(['required_without:guest_id'])
-                                        ->createOptionForm([
-                                            \Filament\Forms\Components\TextInput::make('name')->label('Group Name')->required(),
-                                            \Filament\Forms\Components\TextInput::make('address')->label('Address'),
-                                            \Filament\Forms\Components\TextInput::make('city')->label('City'),
-                                            \Filament\Forms\Components\TextInput::make('fax')->label('Fax'),
-                                            \Filament\Forms\Components\TextInput::make('phone')->label('Phone'),
-                                            \Filament\Forms\Components\TextInput::make('handphone')->label('Handphone'),
-                                            \Filament\Forms\Components\TextInput::make('email')->label('Email')->email(),
-                                            \Filament\Forms\Components\Textarea::make('long_remark')->label('Remark')->rows(2),
-                                            \Filament\Forms\Components\Hidden::make('hotel_id')->default(fn() => \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id),
-                                            \Filament\Forms\Components\Hidden::make('created_by')->default(fn() => \Illuminate\Support\Facades\Auth::id()),
-                                        ]),
-                                ])
-                                ->columnSpan(12),
-                        ]),
+                        // GROUP Section
+                        Select::make('group_id')
+                            ->required(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
+                            ->visible(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
+                            ->live()
+                            ->label('Group')
+                            ->native(false)
+                            ->searchable()
+                            ->options(function () {
+                                $hotelId = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                $groups = \App\Models\ReservationGroup::query()
+                                    ->when($hotelId, fn($q) => $q->where('hotel_id', $hotelId))
+                                    ->orderBy('name')
+                                    ->limit(200)
+                                    ->get(['id', 'name', 'city']);
+                                return $groups->mapWithKeys(function ($g) {
+                                    $city = $g->city ? " ({$g->city})" : '';
+                                    return [$g->id => $g->name . $city];
+                                })->toArray();
+                            })
+                            ->createOptionForm([
+                                TextInput::make('name')->label('Group Name')->required(),
+                                TextInput::make('address')->label('Address'),
+                                TextInput::make('city')->label('City'),
+                                TextInput::make('phone')->label('Phone'),
+                                TextInput::make('email')->label('Email')->email(),
+                                Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
+                            ])
+                            ->createOptionUsing(fn(array $data) => \App\Models\ReservationGroup::create($data)->id)
+                            ->columnSpan(12),
+                    ]),
                 ]),
 
-            // =========================================
-            // Assign Room & Guest (tanpa reactive/helper)
-            // =========================================
-            Section::make('Information Guest & Room Assignment')
+            // ===========================
+            // Room Assignment & Guest Details (PERBAIKAN HOOK)
+            // ===========================
+            Section::make('Room Assignment & Guest Details')
                 ->schema([
                     Repeater::make('reservationGuests')
                         ->relationship('reservationGuests')
                         ->columnSpanFull()
                         ->columns(12)
-                        // ===== Create hook =====
+
+                        // PERBAIKAN: Gunakan KEDUA hook untuk cover semua kasus
                         ->mutateRelationshipDataBeforeCreateUsing(function (array $data): array {
-                            // Hotel id
-                            $data['hotel_id'] = $data['hotel_id']
-                                ?? (\Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                    ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id);
+                            // Hotel ID
+                            $data['hotel_id'] = $data['hotel_id'] ?? Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
 
-                            // Pax total
-                            $male     = (int) ($data['male'] ?? 0);
-                            $female   = (int) ($data['female'] ?? 0);
-                            $children = (int) ($data['children'] ?? 0);
+                            // PENTING: Calculate total people - PASTIKAN TIDAK NULL
+                            $male = (int) preg_replace('/\D+/', '', (string) ($data['male'] ?? '0'));
+                            $female = (int) preg_replace('/\D+/', '', (string) ($data['female'] ?? '0'));
+                            $children = (int) preg_replace('/\D+/', '', (string) ($data['children'] ?? '0'));
                             $data['jumlah_orang'] = max(1, $male + $female + $children);
 
-                            // ==== Sync tanggal dari header (arrival/departure/nights) ====
-                            $parentArrival    = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_arrival');
-                            $parentDeparture  = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_departure');
-                            $parentNights     = (int) (\Illuminate\Support\Arr::get(request()->input(), 'data.nights') ?? 1);
-
-                            $headerIn = $parentArrival
-                                ? \Illuminate\Support\Carbon::parse($parentArrival)->setTime(12, 0)
-                                : null;
-
-                            $headerOut = $parentDeparture
-                                ? \Illuminate\Support\Carbon::parse($parentDeparture)->setTime(12, 0)
-                                : ($headerIn
-                                    ? $headerIn->copy()->addDays(max(1, $parentNights))->setTime(12, 0)
-                                    : null);
-
-                            // Default checkin/checkout per baris
-                            if (empty($data['expected_checkin'])) {
-                                $data['expected_checkin'] = $headerIn ? $headerIn->copy() : now()->setTime(12, 0);
-                            }
-                            if (empty($data['expected_checkout'])) {
-                                $data['expected_checkout'] = $headerOut
-                                    ? $headerOut->copy()
-                                    : \Illuminate\Support\Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
-                            }
-
-                            // Pastikan checkout > checkin (≥+1 hari)
-                            if (
-                                \Illuminate\Support\Carbon::parse($data['expected_checkout'])
-                                ->lessThanOrEqualTo(\Illuminate\Support\Carbon::parse($data['expected_checkin']))
-                            ) {
-                                $data['expected_checkout'] = \Illuminate\Support\Carbon::parse($data['expected_checkin'])
-                                    ->addDay()->setTime(12, 0);
-                            }
-
-                            // Auto room rate jika kosong
-                            if (empty($data['room_rate']) && ! empty($data['room_id'])) {
-                                $price = \App\Models\Room::whereKey($data['room_id'])->value('price');
-                                $data['room_rate'] = (int) ($price ?? 0);
-                            }
-
-                            return $data;
-                        })
-
-                        // ===== Save hook =====
-                        ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
-                            $data['hotel_id'] = $data['hotel_id']
-                                ?? (Session::get('active_hotel_id')
-                                    ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id);
-
-                            // Pax total
-                            $male     = (int) ($data['male'] ?? 0);
-                            $female   = (int) ($data['female'] ?? 0);
-                            $children = (int) ($data['children'] ?? 0);
-                            $data['jumlah_orang'] = max(1, $male + $female + $children);
-
-                            // Sync dari header jika field kosong
-                            $parentArrival   = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_arrival');
+                            // Sync dates from header
+                            $parentArrival = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_arrival');
                             $parentDeparture = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_departure');
 
                             if (empty($data['expected_checkin']) && $parentArrival) {
-                                $data['expected_checkin'] = \Illuminate\Support\Carbon::parse($parentArrival)->setTime(12, 0);
+                                $data['expected_checkin'] = Carbon::parse($parentArrival);
                             }
                             if (empty($data['expected_checkout']) && $parentDeparture) {
-                                $data['expected_checkout'] = \Illuminate\Support\Carbon::parse($parentDeparture)->setTime(12, 0);
+                                $data['expected_checkout'] = Carbon::parse($parentDeparture);
                             }
 
-                            // Default fallback
+                            // Default dates
                             if (empty($data['expected_checkin'])) {
                                 $data['expected_checkin'] = now()->setTime(12, 0);
                             }
                             if (empty($data['expected_checkout'])) {
-                                $data['expected_checkout'] = \Illuminate\Support\Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
+                                $data['expected_checkout'] = Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
                             }
 
-                            // Room rate normalize/auto
-                            if (empty($data['room_rate']) && ! empty($data['room_id'])) {
-                                $price = \App\Models\Room::whereKey($data['room_id'])->value('price');
+                            // Auto room rate
+                            if (empty($data['room_rate']) && !empty($data['room_id'])) {
+                                $price = Room::whereKey($data['room_id'])->value('price');
                                 $data['room_rate'] = (int) ($price ?? 0);
-                            } else {
-                                $data['room_rate'] = (int) ($data['room_rate'] ?? 0);
                             }
+
+                            // Normalize numeric fields
+                            $data['room_rate'] = (int) ($data['room_rate'] ?? 0);
+                            $data['discount_percent'] = (float) ($data['discount_percent'] ?? 0);
+                            $data['service'] = (int) ($data['service'] ?? 0);
+                            $data['extra_bed'] = (int) ($data['extra_bed'] ?? 0);
+
+                            return $data;
+                        })
+
+                        ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
+                            // Hotel ID
+                            $data['hotel_id'] = $data['hotel_id'] ?? Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+                            // PENTING: Calculate total people - PASTIKAN TIDAK NULL
+                            $male = (int) preg_replace('/\D+/', '', (string) ($data['male'] ?? '0'));
+                            $female = (int) preg_replace('/\D+/', '', (string) ($data['female'] ?? '0'));
+                            $children = (int) preg_replace('/\D+/', '', (string) ($data['children'] ?? '0'));
+                            $data['jumlah_orang'] = max(1, $male + $female + $children);
+
+                            // Sync dates from header
+                            $parentArrival = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_arrival');
+                            $parentDeparture = \Illuminate\Support\Arr::get(request()->input(), 'data.expected_departure');
+
+                            if (empty($data['expected_checkin']) && $parentArrival) {
+                                $data['expected_checkin'] = Carbon::parse($parentArrival);
+                            }
+                            if (empty($data['expected_checkout']) && $parentDeparture) {
+                                $data['expected_checkout'] = Carbon::parse($parentDeparture);
+                            }
+
+                            // Default dates
+                            if (empty($data['expected_checkin'])) {
+                                $data['expected_checkin'] = now()->setTime(12, 0);
+                            }
+                            if (empty($data['expected_checkout'])) {
+                                $data['expected_checkout'] = Carbon::parse($data['expected_checkin'])->addDay()->setTime(12, 0);
+                            }
+
+                            // Auto room rate
+                            if (empty($data['room_rate']) && !empty($data['room_id'])) {
+                                $price = Room::whereKey($data['room_id'])->value('price');
+                                $data['room_rate'] = (int) ($price ?? 0);
+                            }
+
+                            // Normalize numeric fields
+                            $data['room_rate'] = (int) ($data['room_rate'] ?? 0);
+                            $data['discount_percent'] = (float) ($data['discount_percent'] ?? 0);
+                            $data['service'] = (int) ($data['service'] ?? 0);
+                            $data['extra_bed'] = (int) ($data['extra_bed'] ?? 0);
 
                             return $data;
                         })
 
                         ->schema([
                             Grid::make(12)->schema([
-                                \Filament\Forms\Components\Hidden::make('id')
-                                    ->dehydrated(true)
-                                    ->disabled(),
+                                Hidden::make('id'),
 
-                                // =========================
-                                // ROW 1 (wajib)
-                                // =========================
-
-                                // Room (2/12)
-                                \Filament\Forms\Components\Select::make('room_id')
+                                // Room (3/12) - ENHANCED dengan smart filtering
+                                Select::make('room_id')
                                     ->label('Room')
                                     ->native(false)
-                                    ->placeholder('Select')
+                                    ->placeholder('Select Room')
                                     ->searchable()
-                                    ->rules(['required', 'distinct'])
+                                    ->required()
                                     ->live()
-                                    ->reactive()
+                                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
+                                        // Auto fill room rate
+                                        if ($state && empty($get('room_rate'))) {
+                                            $price = Room::whereKey($state)->value('price');
+                                            if ($price !== null) {
+                                                $set('room_rate', (int) $price);
+                                            }
+                                        }
+                                    })
                                     ->options(function (Get $get) {
-                                        $hid     = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                            ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                        $current = (int) ($get('room_id') ?? 0);
+                                        $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                        $currentRoomId = (int) ($get('room_id') ?? 0);
 
-                                        $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.room_id') ?? []));
-                                        $exclude = array_diff($picked, [$current]);
+                                        // Ambil semua room_id yang sudah dipilih di repeater ini (kecuali current)
+                                        $selectedRoomIds = array_filter(
+                                            array_map('intval', $get('../../reservationGuests.*.room_id') ?? []),
+                                            fn($id) => $id > 0 && $id !== $currentRoomId
+                                        );
 
-                                        // GANTI: gunakan scope assignable + filter hotel + exclude yg sudah dipilih
                                         return \App\Models\Room::query()
                                             ->where('hotel_id', $hid)
-                                            ->assignable() // TAMBAH: hanya VC/VCI & tidak OCC
-                                            ->when(! empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
+                                            ->where('status', 'VCI') // HANYA VCI yang bisa dipilih
+                                            ->when(!empty($selectedRoomIds), fn($q) => $q->whereNotIn('id', $selectedRoomIds)) // exclude yang sudah dipilih
+                                            ->whereNotExists(function ($sub) use ($hid) {
+                                                // exclude yang sedang ditempati (actual checkin ada, checkout belum)
+                                                $sub->from('reservation_guests as rg')
+                                                    ->whereColumn('rg.room_id', 'rooms.id')
+                                                    ->where('rg.hotel_id', $hid)
+                                                    ->whereNotNull('rg.actual_checkin')
+                                                    ->whereNull('rg.actual_checkout');
+                                            })
                                             ->orderBy('room_no')
                                             ->limit(200)
                                             ->pluck('room_no', 'id');
                                     })
                                     ->getSearchResultsUsing(function (string $search, Get $get) {
-                                        $hid     = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                            ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                        $current = (int) ($get('room_id') ?? 0);
+                                        $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                        $currentRoomId = (int) ($get('room_id') ?? 0);
 
-                                        $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.room_id') ?? []));
-                                        $exclude = array_diff($picked, [$current]);
+                                        $selectedRoomIds = array_filter(
+                                            array_map('intval', $get('../../reservationGuests.*.room_id') ?? []),
+                                            fn($id) => $id > 0 && $id !== $currentRoomId
+                                        );
 
-                                        // GANTI: tetap hormati assignable()
                                         return \App\Models\Room::query()
                                             ->where('hotel_id', $hid)
-                                            ->assignable() // TAMBAH
+                                            ->where('status', 'VCI')
                                             ->where('room_no', 'like', "%{$search}%")
-                                            ->when(! empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
+                                            ->when(!empty($selectedRoomIds), fn($q) => $q->whereNotIn('id', $selectedRoomIds))
+                                            ->whereNotExists(function ($sub) use ($hid) {
+                                                $sub->from('reservation_guests as rg')
+                                                    ->whereColumn('rg.room_id', 'rooms.id')
+                                                    ->where('rg.hotel_id', $hid)
+                                                    ->whereNotNull('rg.actual_checkin')
+                                                    ->whereNull('rg.actual_checkout');
+                                            })
                                             ->orderBy('room_no')
                                             ->limit(50)
                                             ->pluck('room_no', 'id');
                                     })
-                                    ->columnSpan(2),
+                                    ->columnSpan(3),
 
-                                // Guest (6/12)
-                                \Filament\Forms\Components\Select::make('guest_id')
+                                // Guest (5/12) - ENHANCED dengan smart filtering
+                                Select::make('guest_id')
                                     ->label('Guest')
-                                    ->placeholder('Select')
+                                    ->placeholder('Select Guest')
                                     ->native(false)
-                                    ->rules(['required', 'distinct'])
                                     ->searchable()
-                                    ->live()
-                                    ->reactive()
-                                    ->createOptionForm([
-                                        Section::make('Guest Info')->schema([
-                                            Grid::make(12)->schema([
-                                                Select::make('salutation')
-                                                    ->label('Title')
-                                                    ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
-                                                    ->native(false)
-                                                    ->columnSpan(3),
-
-                                                \Filament\Forms\Components\TextInput::make('name')
-                                                    ->label('Name')
-                                                    ->required()
-                                                    ->maxLength(150)
-                                                    ->columnSpan(9),
-
-                                                \Filament\Forms\Components\Select::make('guest_type')
-                                                    ->label('Guest Type')
-                                                    ->options([
-                                                        'DOMESTIC'      => 'Domestic',
-                                                        'INTERNATIONAL' => 'International',
-                                                    ])
-                                                    ->native(false)
-                                                    ->columnSpan(4),
-
-                                                \Filament\Forms\Components\TextInput::make('nationality')
-                                                    ->label('Nationality')
-                                                    ->maxLength(50)
-                                                    ->columnSpan(4),
-
-                                                \Filament\Forms\Components\TextInput::make('address')
-                                                    ->label('Address')
-                                                    ->maxLength(255)
-                                                    ->columnSpan(12),
-
-                                                \Filament\Forms\Components\TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
-                                                \Filament\Forms\Components\TextInput::make('profession')->label('Profession')->maxLength(50)->columnSpan(4),
-
-                                                \Filament\Forms\Components\Select::make('id_type')
-                                                    ->label('Identity Type')
-                                                    ->options([
-                                                        'ID'             => 'National ID',
-                                                        'PASSPORT'       => 'Passport',
-                                                        'DRIVER_LICENSE' => 'Driver License',
-                                                        'OTHER'          => 'Other',
-                                                    ])
-                                                    ->native(false)
-                                                    ->columnSpan(4),
-
-                                                \Filament\Forms\Components\TextInput::make('id_card')
-                                                    ->label('Identity Number')
-                                                    ->maxLength(100)
-                                                    ->rule('not_in:-')
-                                                    ->rules([
-                                                        \Illuminate\Validation\Rule::unique('guests', 'id_card')
-                                                            ->where(fn($q) => $q
-                                                                ->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                ->whereNull('deleted_at')),
-                                                    ])
-                                                    ->nullable()
-                                                    ->columnSpan(6),
-
-                                                \Filament\Forms\Components\FileUpload::make('id_card_file')
-                                                    ->label('Attach ID (JPG/PNG/PDF)')
-                                                    ->directory('guests/id')
-                                                    ->disk('public')
-                                                    ->acceptedFileTypes(['image/jpeg', 'image/png', 'application/pdf'])
-                                                    ->maxSize(4096)
-                                                    ->downloadable()
-                                                    ->openable()
-                                                    ->columnSpan(6),
-
-                                                \Filament\Forms\Components\TextInput::make('issued_place')->label('Issued Place')->maxLength(100)->columnSpan(6),
-                                                \Filament\Forms\Components\DatePicker::make('issued_date')->label('Issued Date')->native(false)->columnSpan(6),
-
-                                                \Filament\Forms\Components\TextInput::make('birth_place')->label('Birth Place')->maxLength(50)->columnSpan(6),
-                                                \Filament\Forms\Components\DatePicker::make('birth_date')->label('Birth Date')->native(false)->columnSpan(6),
-
-                                                \Filament\Forms\Components\TextInput::make('phone')
-                                                    ->label('Phone No')
-                                                    ->maxLength(50)
-                                                    ->rule('regex:/^\\+?\\d{6,20}$/')
-                                                    ->rules([
-                                                        \Illuminate\Validation\Rule::unique('guests', 'phone')
-                                                            ->where(fn($q) => $q
-                                                                ->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                ->whereNull('deleted_at')),
-                                                    ])
-                                                    ->nullable()
-                                                    ->columnSpan(6),
-
-                                                \Filament\Forms\Components\TextInput::make('email')
-                                                    ->label('Email')
-                                                    ->email()
-                                                    ->maxLength(150)
-                                                    ->rules([
-                                                        \Illuminate\Validation\Rule::unique('guests', 'email')
-                                                            ->where(fn($q) => $q
-                                                                ->where('hotel_id', \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id)
-                                                                ->whereNull('deleted_at')),
-                                                    ])
-                                                    ->nullable()
-                                                    ->columnSpan(6),
-
-                                                \Filament\Forms\Components\Hidden::make('hotel_id')
-                                                    ->default(fn() => \Illuminate\Support\Facades\Session::get('active_hotel_id') ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id),
-                                            ]),
-                                        ]),
-                                    ])
-                                    ->createOptionUsing(fn(array $data) => \App\Models\Guest::create($data)->id)
+                                    ->required()
                                     ->options(function (Get $get) {
-                                        $hid     = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                            ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                        $current = (int) ($get('guest_id') ?? 0);
+                                        $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                        $currentGuestId = (int) ($get('guest_id') ?? 0);
 
-                                        $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.guest_id') ?? []));
-                                        $exclude = array_diff($picked, [$current]);
+                                        // Ambil semua guest_id yang sudah dipilih di repeater ini (kecuali current)
+                                        $selectedGuestIds = array_filter(
+                                            array_map('intval', $get('../../reservationGuests.*.guest_id') ?? []),
+                                            fn($id) => $id > 0 && $id !== $currentGuestId
+                                        );
 
-                                        // GANTI: exclude tamu yg sedang menginap (open stay)
                                         $rows = \App\Models\Guest::query()
                                             ->where('hotel_id', $hid)
-                                            ->when(! empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
-                                            ->whereNotExists(function ($sub) use ($hid) {       // TAMBAH
+                                            ->when(!empty($selectedGuestIds), fn($q) => $q->whereNotIn('id', $selectedGuestIds)) // exclude yang sudah dipilih
+                                            ->whereNotExists(function ($sub) use ($hid) {
+                                                // exclude yang sedang menginap (checkin ada, checkout belum)
                                                 $sub->from('reservation_guests as rg')
                                                     ->whereColumn('rg.guest_id', 'guests.id')
                                                     ->where('rg.hotel_id', $hid)
@@ -684,30 +487,30 @@ class ReservationForm
 
                                         return $rows->mapWithKeys(function ($g) {
                                             $idCard = trim((string) ($g->id_card ?? ''));
-                                            $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                            $label = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
                                             return [$g->id => $label];
                                         })->toArray();
                                     })
                                     ->getSearchResultsUsing(function (string $search, Get $get) {
-                                        $hid     = \Illuminate\Support\Facades\Session::get('active_hotel_id')
-                                            ?? \Illuminate\Support\Facades\Auth::user()?->hotel_id;
-                                        $current = (int) ($get('guest_id') ?? 0);
+                                        $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                                        $currentGuestId = (int) ($get('guest_id') ?? 0);
 
-                                        $picked  = array_map('intval', array_filter($get('../../reservationGuests.*.guest_id') ?? []));
-                                        $exclude = array_diff($picked, [$current]);
+                                        $selectedGuestIds = array_filter(
+                                            array_map('intval', $get('../../reservationGuests.*.guest_id') ?? []),
+                                            fn($id) => $id > 0 && $id !== $currentGuestId
+                                        );
 
                                         $s = trim(preg_replace('/\s+/', ' ', $search));
 
-                                        // GANTI: exclude open stay juga saat pencarian
                                         $rows = \App\Models\Guest::query()
                                             ->where('hotel_id', $hid)
-                                            ->when(! empty($exclude), fn($q) => $q->whereNotIn('id', $exclude))
+                                            ->when(!empty($selectedGuestIds), fn($q) => $q->whereNotIn('id', $selectedGuestIds))
                                             ->where(function ($q) use ($s) {
                                                 $q->where('name', 'like', "%{$s}%")
                                                     ->orWhere('phone', 'like', "%{$s}%")
                                                     ->orWhere('id_card', 'like', "%{$s}%");
                                             })
-                                            ->whereNotExists(function ($sub) use ($hid) {       // TAMBAH
+                                            ->whereNotExists(function ($sub) use ($hid) {
                                                 $sub->from('reservation_guests as rg')
                                                     ->whereColumn('rg.guest_id', 'guests.id')
                                                     ->where('rg.hotel_id', $hid)
@@ -720,201 +523,188 @@ class ReservationForm
 
                                         return $rows->mapWithKeys(function ($g) {
                                             $idCard = trim((string) ($g->id_card ?? ''));
-                                            $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                            $label = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
                                             return [$g->id => $label];
                                         })->toArray();
                                     })
-                                    ->getOptionLabelUsing(function ($value) {
-                                        $g = \App\Models\Guest::query()->select(['name', 'id_card'])->find($value);
-                                        if (! $g) return null;
-                                        $idCard = trim((string) ($g->id_card ?? ''));
-                                        return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
-                                    })
-                                    ->extraAttributes([
-                                        'x-init' => '$nextTick(() => { const el = $el.querySelector(".ts-control"); if(el){ el.style.whiteSpace="nowrap"; el.style.overflow="hidden"; el.style.textOverflow="ellipsis"; } })',
-                                    ])
-                                    ->columnSpan(6),
+                                    ->columnSpan(5),
 
                                 // Rate (2/12)
-                                \Filament\Forms\Components\TextInput::make('room_rate')
+                                TextInput::make('room_rate')
                                     ->label('Rate')
                                     ->numeric()
-                                    ->mask(\Filament\Support\RawJs::make('$money($input)'))
+                                    ->mask(RawJs::make('$money($input)'))
                                     ->stripCharacters(',')
                                     ->placeholder('Auto from room')
                                     ->minValue(0)
                                     ->columnSpan(2),
 
                                 // Discount (2/12)
-                                \Filament\Forms\Components\TextInput::make('discount_percent')
+                                TextInput::make('discount_percent')
                                     ->label('Discount (%)')
                                     ->numeric()
-                                    ->inputMode('decimal')
                                     ->step('0.01')
                                     ->minValue(0)
                                     ->maxValue(100)
-                                    ->placeholder('0.00')
-                                    ->suffix('%')
                                     ->default(0)
                                     ->columnSpan(2),
 
-                                // =========================
-                                // ROW 2 (opsi tarif)
-                                // =========================
-                                \Filament\Forms\Components\TextInput::make('service')
+                                // Service & Extra Bed
+                                TextInput::make('service')
                                     ->label('Service')
-                                    ->mask(\Filament\Support\RawJs::make('$money($input)'))
-                                    ->stripCharacters(',')
                                     ->numeric()
                                     ->default(0)
                                     ->columnSpan(3),
 
-                                \Filament\Forms\Components\TextInput::make('extra_bed')
+                                TextInput::make('extra_bed')
                                     ->label('E. Bed')
                                     ->numeric()
                                     ->default(0)
-                                    ->minValue(0)
                                     ->columnSpan(2),
 
-                                \Filament\Forms\Components\Select::make('breakfast')
+                                Select::make('breakfast')
                                     ->label('Breakfast')
                                     ->options(['Yes' => 'Yes', 'No' => 'No'])
                                     ->default('No')
                                     ->columnSpan(2),
 
-                                \Filament\Forms\Components\TextInput::make('person')
+                                TextInput::make('person')
                                     ->label('Person Charge')
                                     ->columnSpan(3),
 
-                                // =========================
-                                // ROW 3 (pax & keterangan)
-                                // =========================
-                                \Filament\Forms\Components\TextInput::make('male')
+                                // Pax - TAMBAHKAN live() untuk auto-calculate jumlah_orang
+                                TextInput::make('male')
                                     ->label('Male')
                                     ->numeric()
                                     ->default(1)
                                     ->minValue(0)
+                                    ->live()
+                                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
+                                        // Auto calculate jumlah_orang
+                                        $male = (int) ($get('male') ?? 0);
+                                        $female = (int) ($get('female') ?? 0);
+                                        $children = (int) ($get('children') ?? 0);
+                                        $set('jumlah_orang', max(1, $male + $female + $children));
+                                    })
                                     ->columnSpan(2),
 
-                                \Filament\Forms\Components\TextInput::make('female')
+                                TextInput::make('female')
                                     ->label('Female')
                                     ->numeric()
                                     ->default(0)
                                     ->minValue(0)
+                                    ->live()
+                                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
+                                        // Auto calculate jumlah_orang
+                                        $male = (int) ($get('male') ?? 0);
+                                        $female = (int) ($get('female') ?? 0);
+                                        $children = (int) ($get('children') ?? 0);
+                                        $set('jumlah_orang', max(1, $male + $female + $children));
+                                    })
                                     ->columnSpan(2),
 
-                                \Filament\Forms\Components\TextInput::make('children')
+                                TextInput::make('children')
                                     ->label('Children')
                                     ->numeric()
                                     ->default(0)
                                     ->minValue(0)
+                                    ->live()
+                                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
+                                        // Auto calculate jumlah_orang
+                                        $male = (int) ($get('male') ?? 0);
+                                        $female = (int) ($get('female') ?? 0);
+                                        $children = (int) ($get('children') ?? 0);
+                                        $set('jumlah_orang', max(1, $male + $female + $children));
+                                    })
                                     ->columnSpan(2),
 
-                                \Filament\Forms\Components\Hidden::make('jumlah_orang'),
+                                // HIDDEN jumlah_orang
+                                Hidden::make('jumlah_orang')
+                                    ->default(1)
+                                    ->dehydrated(),
 
-                                \Filament\Forms\Components\TextInput::make('pov')
+                                TextInput::make('pov')
                                     ->label('Purpose of Visit')
                                     ->maxLength(150)
-                                    ->columnSpan(3),
+                                    ->columnSpan(4),
 
-                                \Filament\Forms\Components\TextInput::make('note')
+                                TextInput::make('note')
                                     ->label('Note')
                                     ->maxLength(150)
-                                    ->columnSpan(5),
+                                    ->columnSpan(4),
                             ])->columnSpanFull(),
                         ])
 
                         ->deletable(false)
+                        ->addActionLabel('Add Room Assignment')
+                        ->itemLabel(
+                            fn(array $state): ?string =>
+                            !empty($state['room_id'])
+                                ? 'Room: ' . \App\Models\Room::find($state['room_id'])?->room_no
+                                : 'New Assignment'
+                        )
 
+                        // TAMBAHAN: Action buttons untuk Check-in dan Delete
                         ->extraItemActions([
-                            // ===== Open Check-In page =====
+                            // Check-in Button
                             Action::make('check_in')
                                 ->label('Check In')
                                 ->color('success')
                                 ->icon('heroicon-o-arrow-right-on-rectangle')
-                                ->visible(function ($record): bool {
-                                    if ($record instanceof \App\Models\ReservationGuest) {
-                                        return filled($record->getKey());
-                                    }
-                                    if (isset($record->reservation_guest_id) && $record->reservation_guest_id) {
-                                        return true;
-                                    }
-                                    if (method_exists($record, 'reservationGuests')) {
-                                        return $record->reservationGuests()->exists();
-                                    }
-                                    return true;
+                                ->visible(function (array $arguments, $livewire) {
+                                    // Hanya tampil jika record sudah tersimpan (ada ID)
+                                    $itemKey = data_get($arguments, 'item');
+                                    $id = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
+                                    return $id > 0;
                                 })
-                                ->action(function (array $arguments, $livewire, $record) {
-                                    $rgId = null;
+                                ->action(function (array $arguments, $livewire) {
+                                    // Ambil ID dari state repeater
+                                    $itemKey = data_get($arguments, 'item');
+                                    $id = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
 
-                                    // Ambil ID dari state Repeater (paling akurat)
-                                    if ($itemKey = \Illuminate\Support\Arr::get($arguments, 'item')) {
-                                        $rgId = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
-                                    }
-
-                                    // Fallback lain
-                                    if (! $rgId && $record instanceof \App\Models\ReservationGuest) {
-                                        $rgId = $record->getKey();
-                                    }
-                                    if (! $rgId && isset($record->reservation_guest_id) && $record->reservation_guest_id) {
-                                        $rgId = (int) $record->reservation_guest_id;
-                                    }
-                                    if (! $rgId && method_exists($record, 'reservationGuests')) {
-                                        $rgId = optional($record->reservationGuests()->latest('id')->first())?->getKey();
-                                    }
-
-                                    if (! $rgId) {
-                                        \Filament\Notifications\Notification::make()
-                                            ->title('Gagal membuka Check In')
-                                            ->body('ReservationGuest ID tidak ditemukan dari item/form yang dipilih.')
+                                    if (!$id) {
+                                        Notification::make()
+                                            ->title('Error')
+                                            ->body('Record belum tersimpan. Silakan save terlebih dahulu.')
                                             ->danger()
                                             ->send();
                                         return;
                                     }
 
-                                    $url = ReservationGuestResource::getUrl('edit', ['record' => $rgId]);
+                                    // Redirect ke halaman check-in
+                                    $url = "https://hotel-bome.test/admin/reservation-guests/{$id}/edit";
 
+                                    // JavaScript untuk membuka di tab baru
                                     $livewire->js(<<<JS
-                            window.open("{$url}", "_blank", "noopener");
+                            window.open("{$url}", "_blank", "noopener,noreferrer");
                         JS);
                                 }),
 
-                            // ===== Hard delete baris sekarang =====
-                            Action::make('hapus_sekarang')
-                                ->label('Hapus (langsung)')
-                                ->icon('heroicon-o-trash')
+                            // Delete Button (sudah ada default, tapi kita custom untuk konfirmasi)
+                            Action::make('delete_assignment')
+                                ->label('Delete')
                                 ->color('danger')
+                                ->icon('heroicon-o-trash')
                                 ->requiresConfirmation()
-                                ->modalHeading('Hapus baris ini sekarang?')
-                                ->modalDescription(function (array $arguments, $livewire) {
-                                    $itemKey = data_get($arguments, 'item');
-                                    $rgId    = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
-                                    return 'Tindakan ini tidak dapat dibatalkan. ID RG: #' . ($rgId ?: '-');
-                                })
+                                ->modalHeading('Delete Room Assignment?')
+                                ->modalDescription('This action cannot be undone.')
                                 ->action(function (array $arguments, $livewire) {
                                     $itemKey = data_get($arguments, 'item');
-                                    $rgId    = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
+                                    $id = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
 
-                                    if (! $rgId) {
-                                        \Filament\Notifications\Notification::make()
-                                            ->title('Gagal menghapus')
-                                            ->body('ID ReservationGuest tidak ditemukan pada baris ini.')
-                                            ->danger()
-                                            ->send();
-                                        return;
+                                    if ($id) {
+                                        // Hapus dari database jika sudah tersimpan
+                                        \App\Models\ReservationGuest::find($id)?->delete();
                                     }
 
-                                    \Illuminate\Support\Facades\DB::transaction(function () use ($rgId) {
-                                        \App\Models\ReservationGuest::find($rgId)?->delete(); // hard delete (model RG tidak pakai SoftDeletes)
-                                    });
-
-                                    // Hapus dari state agar hilang di UI tanpa reload
+                                    // Hapus dari state repeater
                                     $items = (array) data_get($livewire, 'data.reservationGuests', []);
                                     unset($items[$itemKey]);
                                     data_set($livewire, 'data.reservationGuests', $items);
 
-                                    \Filament\Notifications\Notification::make()
-                                        ->title("ReservationGuest #{$rgId} dihapus")
+                                    Notification::make()
+                                        ->title('Deleted')
+                                        ->body('Room assignment has been deleted.')
                                         ->success()
                                         ->send();
                                 }),

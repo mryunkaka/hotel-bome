@@ -151,20 +151,6 @@ final class ReservationGuestForm
                                 ->alignment('center')                 // center semua tombol di grup
                                 ->extraAttributes(['class' => 'gap-3 flex-wrap']) // spasi antar tombol & wrap di layar kecil
                                 ->columnSpanFull(),
-
-                            // === Row 2: tombol back di kiri
-                            Actions::make([
-                                Action::make('back_to_reservation')
-                                    ->label('Back to Reservation')
-                                    ->icon('heroicon-o-arrow-uturn-left')
-                                    ->color('gray')
-                                    ->button()
-                                    ->url(fn(\App\Models\ReservationGuest $record) => url('/admin/reservations/' . $record->reservation_id . '/edit'))
-                                    ->openUrlInNewTab(false),
-                            ])
-                                ->alignment('start')
-                                ->extraAttributes(['class' => 'gap-3'])
-                                ->columnSpanFull(),
                         ]),
                 ])
                 ->columnSpanFull(),

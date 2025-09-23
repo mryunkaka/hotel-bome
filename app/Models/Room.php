@@ -14,13 +14,15 @@ class Room extends Model
     use SoftDeletes;
 
     // TAMBAH: kode status standar housekeeping / FO
-    public const ST_VC  = 'VC';   // Vacant Clean (ready)
-    public const ST_VCI = 'VCI';  // Vacant Clean Inspected (ready+inspected)
-    public const ST_VD  = 'VD';   // Vacant Dirty
-    public const ST_OCC = 'OCC';  // Occupied
-    public const ST_ED  = 'ED';   // Expected Departure
-    public const ST_OOO = 'OOO';  // Out Of Order
-    public const ST_HU  = 'HU';   // House Use
+    public const ST_VC  = 'VC';   // Vacant Clean (ready) Pengertian: Kamar Kosong Bersih.
+    public const ST_VCI = 'VCI';  // Vacant Clean Inspected (ready+inspected) Pengertian: Kamar Kosong Bersih dan Sudah Diperiksa.
+    public const ST_VD  = 'VD';   // Vacant Dirty Pengertian: Kamar Kosong Kotor.
+    public const ST_OCC = 'OCC';  // Occupied Pengertian: Kamar Terisi.
+    public const ST_LS  = 'LS';   // Long Stay
+    public const ST_ED  = 'ED';   // Expected Departure Pengertian: Diharapkan Berangkat (Check-out) Hari Ini.
+    public const ST_OOO = 'OOO';  // Out Of Order Pengertian: Kamar Rusak / Dalam Perbaikan.
+    public const ST_HU  = 'HU';   // House Use Pengertian: Digunakan oleh Pihak Hotel.
+    public const ST_RS  = 'RS';   // Reserved Pengertian: Dipesan, belum check-in.   // <— DITAMBAHKAN
 
     protected $fillable = [
 
@@ -39,6 +41,14 @@ class Room extends Model
         'price'    => 'decimal:2',
         'floor'    => 'integer',
     ];
+
+    public function setStatus(string $code): void
+    {
+        $this->forceFill([
+            'status' => $code,
+            'status_changed_at' => now(),
+        ])->saveQuietly();
+    }
 
     public function hotel(): BelongsTo
     {

@@ -196,16 +196,40 @@ class ReservationForm
                             ->label('Guest')
                             ->native(false)
                             ->searchable()
-                            ->options(function () {
+                            ->options(function (Get $get) {
                                 $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+                                // === AMBIL ID YANG SUDAH DIPILIH DI REPEATER ===
+                                $currentGuestId = (int) ($get('guest_id') ?? 0);
+                                $idsFromState = $get('reservationGuests.*.guest_id') ?? []; // bisa kosong di konteks header
+                                //ini yang ditambahkan: fallback baca dari request data.* lalu flatten
+                                if (empty($idsFromState)) {
+                                    $idsFromState = \Illuminate\Support\Arr::flatten(
+                                        (array) \Illuminate\Support\Arr::get(request()->input(), 'data.reservationGuests.*.guest_id', [])
+                                    );
+                                }
+                                $selectedGuestIds = array_filter(
+                                    array_map('intval', $idsFromState),
+                                    fn($id) => $id > 0 && $id !== $currentGuestId
+                                );
+
+                                // === QUERY: EXCLUDE yg sudah dipilih & yg masih aktif; sertakan current value agar tidak hilang saat edit ===
                                 $rows = \App\Models\Guest::query()
-                                    ->where('hotel_id', $hid)
-                                    ->whereNotExists(function ($sub) use ($hid) {
-                                        $sub->from('reservation_guests as rg')
-                                            ->whereColumn('rg.guest_id', 'guests.id')
-                                            ->where('rg.hotel_id', $hid)
-                                            ->whereNotNull('rg.actual_checkin')
-                                            ->whereNull('rg.actual_checkout');
+                                    ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId) {
+                                        $q->where('hotel_id', $hid)
+                                            ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds))
+                                            ->whereNotExists(function ($sub) use ($hid) {
+                                                $sub->from('reservation_guests as rg')
+                                                    ->whereColumn('rg.guest_id', 'guests.id')
+                                                    ->where('rg.hotel_id', $hid)
+                                                    //ini yang ditambahkan: cukup cek belum checkout → aktif (termasuk masih reservasi)
+                                                    ->whereNull('rg.actual_checkout');
+                                            });
+
+                                        //ini yang ditambahkan: selalu tampilkan current guest saat edit
+                                        if ($currentGuestId > 0) {
+                                            $q->orWhere('id', $currentGuestId);
+                                        }
                                     })
                                     ->orderBy('name')
                                     ->limit(200)
@@ -217,17 +241,75 @@ class ReservationForm
                                     return [$g->id => $label];
                                 })->toArray();
                             })
+                            ->getSearchResultsUsing(function (string $search, Get $get) { //ini yang ditambahkan
+                                $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+                                $currentGuestId = (int) ($get('guest_id') ?? 0); //ini yang ditambahkan
+                                $idsFromState = $get('reservationGuests.*.guest_id') ?? []; //ini yang ditambahkan
+                                if (empty($idsFromState)) { //ini yang ditambahkan
+                                    $idsFromState = \Illuminate\Support\Arr::flatten(
+                                        (array) \Illuminate\Support\Arr::get(request()->input(), 'data.reservationGuests.*.guest_id', [])
+                                    );
+                                }
+                                $selectedGuestIds = array_filter( //ini yang ditambahkan
+                                    array_map('intval', $idsFromState),
+                                    fn($id) => $id > 0 && $id !== $currentGuestId
+                                );
+
+                                $s = trim(preg_replace('/\s+/', ' ', $search)); //ini yang ditambahkan
+
+                                $rows = \App\Models\Guest::query() //ini yang ditambahkan
+                                    ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId, $s) {
+                                        $q->where('hotel_id', $hid)
+                                            ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds))
+                                            ->where(function ($qq) use ($s) {
+                                                $qq->where('name', 'like', "%{$s}%")
+                                                    ->orWhere('phone', 'like', "%{$s}%")
+                                                    ->orWhere('id_card', 'like', "%{$s}%");
+                                            })
+                                            ->whereNotExists(function ($sub) use ($hid) {
+                                                $sub->from('reservation_guests as rg')
+                                                    ->whereColumn('rg.guest_id', 'guests.id')
+                                                    ->where('rg.hotel_id', $hid)
+                                                    //ini yang ditambahkan: exclude semua yang belum checkout
+                                                    ->whereNull('rg.actual_checkout');
+                                            });
+
+                                        if ($currentGuestId > 0) { //ini yang ditambahkan
+                                            $q->orWhere('id', $currentGuestId);
+                                        }
+                                    })
+                                    ->orderBy('name')
+                                    ->limit(50)
+                                    ->get(['id', 'name', 'id_card']);
+
+                                return $rows->mapWithKeys(function ($g) { //ini yang ditambahkan
+                                    $idCard = trim((string) ($g->id_card ?? ''));
+                                    $label = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                    return [$g->id => $label];
+                                })->toArray();
+                            })
+                            //ini yang ditambahkan: jaga label saat value sudah terisi
+                            ->getOptionLabelUsing(function ($value): ?string {
+                                if (! $value) return null;
+                                $g = \App\Models\Guest::query()->select('name', 'id_card')->find($value);
+                                if (! $g) return null;
+                                $idCard = trim((string) ($g->id_card ?? ''));
+                                return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                            })
                             ->createOptionForm([
                                 Section::make('Guest Info')->schema([
                                     Grid::make(12)->schema([
                                         Select::make('salutation')->label('Title')
                                             ->options(['MR' => 'MR', 'MRS' => 'MRS', 'MISS' => 'MISS'])
-                                            ->native(false)->columnSpan(3),
-                                        TextInput::make('name')->label('Name')->required()->maxLength(150)->columnSpan(9),
+                                            ->default("MR")
+                                            ->native(false)->columnSpan(2),
+                                        TextInput::make('name')->label('Name')->required()->maxLength(150)->columnSpan(4),
                                         Select::make('guest_type')->label('Guest Type')
                                             ->options(['DOMESTIC' => 'Domestic', 'INTERNATIONAL' => 'International'])
-                                            ->native(false)->columnSpan(4),
-                                        TextInput::make('nationality')->label('Nationality')->maxLength(50)->columnSpan(4),
+                                            ->default("DOMESTIC")
+                                            ->native(false)->columnSpan(3),
+                                        TextInput::make('nationality')->label('Nationality')->maxLength(50)->default('Indonesia')->columnSpan(3),
                                         TextInput::make('address')->label('Address')->maxLength(255)->columnSpan(12),
                                         TextInput::make('city')->label('City')->maxLength(50)->columnSpan(4),
                                         TextInput::make('profession')->label('Profession')->maxLength(50)->columnSpan(4),
@@ -236,10 +318,10 @@ class ReservationForm
                                             'PASSPORT' => 'Passport',
                                             'DRIVER_LICENSE' => 'Driver License',
                                             'OTHER' => 'Other',
-                                        ])->native(false)->columnSpan(4),
-                                        TextInput::make('id_card')->label('Identity Number')->maxLength(100)->columnSpan(6),
-                                        TextInput::make('phone')->label('Phone No')->maxLength(50)->columnSpan(6),
-                                        TextInput::make('email')->label('Email')->email()->maxLength(150)->columnSpan(6),
+                                        ])->native(false)->default('ID')->columnSpan(4),
+                                        TextInput::make('id_card')->label('Identity Number')->maxLength(100)->columnSpan(4),
+                                        TextInput::make('phone')->label('Phone No')->maxLength(50)->columnSpan(4),
+                                        TextInput::make('email')->label('Email')->email()->maxLength(150)->columnSpan(4),
                                         Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
                                     ]),
                                 ]),
@@ -411,16 +493,23 @@ class ReservationForm
                                         );
 
                                         return \App\Models\Room::query()
-                                            ->where('hotel_id', $hid)
-                                            ->where('status', 'VCI') // HANYA VCI yang bisa dipilih
-                                            ->when(!empty($selectedRoomIds), fn($q) => $q->whereNotIn('id', $selectedRoomIds)) // exclude yang sudah dipilih
-                                            ->whereNotExists(function ($sub) use ($hid) {
-                                                // exclude yang sedang ditempati (actual checkin ada, checkout belum)
-                                                $sub->from('reservation_guests as rg')
-                                                    ->whereColumn('rg.room_id', 'rooms.id')
-                                                    ->where('rg.hotel_id', $hid)
-                                                    ->whereNotNull('rg.actual_checkin')
-                                                    ->whereNull('rg.actual_checkout');
+                                            ->where(function ($q) use ($hid, $selectedRoomIds, $currentRoomId) {
+                                                // Cabang 1: daftar normal (VCI + tidak terpilih + tidak sedang ditempati)
+                                                $q->where('hotel_id', $hid)
+                                                    ->where('status', 'VCI')
+                                                    ->when(!empty($selectedRoomIds), fn($qq) => $qq->whereNotIn('id', $selectedRoomIds))
+                                                    ->whereNotExists(function ($sub) use ($hid) {
+                                                        $sub->from('reservation_guests as rg')
+                                                            ->whereColumn('rg.room_id', 'rooms.id')
+                                                            ->where('rg.hotel_id', $hid)
+                                                            ->whereNotNull('rg.actual_checkin')
+                                                            ->whereNull('rg.actual_checkout');
+                                                    });
+
+                                                // Cabang 2: SELALU sertakan kamar yang sedang dipakai (apa pun statusnya)
+                                                if ($currentRoomId > 0) {
+                                                    $q->orWhere('id', $currentRoomId);
+                                                }
                                             })
                                             ->orderBy('room_no')
                                             ->limit(200)
@@ -436,20 +525,31 @@ class ReservationForm
                                         );
 
                                         return \App\Models\Room::query()
-                                            ->where('hotel_id', $hid)
-                                            ->where('status', 'VCI')
-                                            ->where('room_no', 'like', "%{$search}%")
-                                            ->when(!empty($selectedRoomIds), fn($q) => $q->whereNotIn('id', $selectedRoomIds))
-                                            ->whereNotExists(function ($sub) use ($hid) {
-                                                $sub->from('reservation_guests as rg')
-                                                    ->whereColumn('rg.room_id', 'rooms.id')
-                                                    ->where('rg.hotel_id', $hid)
-                                                    ->whereNotNull('rg.actual_checkin')
-                                                    ->whereNull('rg.actual_checkout');
+                                            ->where(function ($q) use ($hid, $selectedRoomIds, $currentRoomId, $search) {
+                                                // Cabang 1: hasil cari untuk VCI
+                                                $q->where('hotel_id', $hid)
+                                                    ->where('status', 'VCI')
+                                                    ->where('room_no', 'like', "%{$search}%")
+                                                    ->when(!empty($selectedRoomIds), fn($qq) => $qq->whereNotIn('id', $selectedRoomIds))
+                                                    ->whereNotExists(function ($sub) use ($hid) {
+                                                        $sub->from('reservation_guests as rg')
+                                                            ->whereColumn('rg.room_id', 'rooms.id')
+                                                            ->where('rg.hotel_id', $hid)
+                                                            ->whereNotNull('rg.actual_checkin')
+                                                            ->whereNull('rg.actual_checkout');
+                                                    });
+
+                                                // Cabang 2: tetap tampilkan kamar yang sedang dipakai
+                                                if ($currentRoomId > 0) {
+                                                    $q->orWhere('id', $currentRoomId);
+                                                }
                                             })
                                             ->orderBy('room_no')
                                             ->limit(50)
                                             ->pluck('room_no', 'id');
+                                    })
+                                    ->getOptionLabelUsing(function ($value): ?string {
+                                        return $value ? \App\Models\Room::whereKey($value)->value('room_no') : null;
                                     })
                                     ->columnSpan(3),
 
@@ -471,15 +571,21 @@ class ReservationForm
                                         );
 
                                         $rows = \App\Models\Guest::query()
-                                            ->where('hotel_id', $hid)
-                                            ->when(!empty($selectedGuestIds), fn($q) => $q->whereNotIn('id', $selectedGuestIds)) // exclude yang sudah dipilih
-                                            ->whereNotExists(function ($sub) use ($hid) {
-                                                // exclude yang sedang menginap (checkin ada, checkout belum)
-                                                $sub->from('reservation_guests as rg')
-                                                    ->whereColumn('rg.guest_id', 'guests.id')
-                                                    ->where('rg.hotel_id', $hid)
-                                                    ->whereNotNull('rg.actual_checkin')
-                                                    ->whereNull('rg.actual_checkout');
+                                            ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId) {   // <-- ditambahkan wrapper where()
+                                                $q->where('hotel_id', $hid)
+                                                    ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds)) // exclude yang sudah dipilih
+                                                    ->whereNotExists(function ($sub) use ($hid) {
+                                                        // exclude yang sedang menginap (checkin ada, checkout belum)
+                                                        $sub->from('reservation_guests as rg')
+                                                            ->whereColumn('rg.guest_id', 'guests.id')
+                                                            ->where('rg.hotel_id', $hid)
+                                                            ->whereNotNull('rg.actual_checkin')
+                                                            ->whereNull('rg.actual_checkout');
+                                                    });
+
+                                                if ($currentGuestId > 0) {                                         // <-- ini yang ditambahkan
+                                                    $q->orWhere('id', $currentGuestId);                             // selalu sertakan value saat ini
+                                                }
                                             })
                                             ->orderBy('name')
                                             ->limit(200)
@@ -503,19 +609,25 @@ class ReservationForm
                                         $s = trim(preg_replace('/\s+/', ' ', $search));
 
                                         $rows = \App\Models\Guest::query()
-                                            ->where('hotel_id', $hid)
-                                            ->when(!empty($selectedGuestIds), fn($q) => $q->whereNotIn('id', $selectedGuestIds))
-                                            ->where(function ($q) use ($s) {
-                                                $q->where('name', 'like', "%{$s}%")
-                                                    ->orWhere('phone', 'like', "%{$s}%")
-                                                    ->orWhere('id_card', 'like', "%{$s}%");
-                                            })
-                                            ->whereNotExists(function ($sub) use ($hid) {
-                                                $sub->from('reservation_guests as rg')
-                                                    ->whereColumn('rg.guest_id', 'guests.id')
-                                                    ->where('rg.hotel_id', $hid)
-                                                    ->whereNotNull('rg.actual_checkin')
-                                                    ->whereNull('rg.actual_checkout');
+                                            ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId, $s) { // <-- wrapper where()
+                                                $q->where('hotel_id', $hid)
+                                                    ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds))
+                                                    ->where(function ($qq) use ($s) {
+                                                        $qq->where('name', 'like', "%{$s}%")
+                                                            ->orWhere('phone', 'like', "%{$s}%")
+                                                            ->orWhere('id_card', 'like', "%{$s}%");
+                                                    })
+                                                    ->whereNotExists(function ($sub) use ($hid) {
+                                                        $sub->from('reservation_guests as rg')
+                                                            ->whereColumn('rg.guest_id', 'guests.id')
+                                                            ->where('rg.hotel_id', $hid)
+                                                            ->whereNotNull('rg.actual_checkin')
+                                                            ->whereNull('rg.actual_checkout');
+                                                    });
+
+                                                if ($currentGuestId > 0) {                                         // <-- ini yang ditambahkan
+                                                    $q->orWhere('id', $currentGuestId);                             // tetap tampilkan value saat ini
+                                                }
                                             })
                                             ->orderBy('name')
                                             ->limit(50)
@@ -526,6 +638,13 @@ class ReservationForm
                                             $label = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
                                             return [$g->id => $label];
                                         })->toArray();
+                                    })
+                                    ->getOptionLabelUsing(function ($value): ?string {                                // <-- ini yang ditambahkan
+                                        if (! $value) return null;
+                                        $g = \App\Models\Guest::query()->select('name', 'id_card')->find($value);
+                                        if (! $g) return null;
+                                        $idCard = trim((string) ($g->id_card ?? ''));
+                                        return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
                                     })
                                     ->columnSpan(5),
 
@@ -565,7 +684,7 @@ class ReservationForm
                                 Select::make('breakfast')
                                     ->label('Breakfast')
                                     ->options(['Yes' => 'Yes', 'No' => 'No'])
-                                    ->default('No')
+                                    ->default('Yes')
                                     ->columnSpan(2),
 
                                 TextInput::make('person')
@@ -652,10 +771,18 @@ class ReservationForm
                                 ->color('success')
                                 ->icon('heroicon-o-arrow-right-on-rectangle')
                                 ->visible(function (array $arguments, $livewire) {
-                                    // Hanya tampil jika record sudah tersimpan (ada ID)
                                     $itemKey = data_get($arguments, 'item');
                                     $id = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
-                                    return $id > 0;
+
+                                    if ($id <= 0) {
+                                        return false;
+                                    }
+
+                                    // Ambil dari state repeater apakah sudah ada checkout
+                                    $actualCheckout = data_get($livewire, "data.reservationGuests.{$itemKey}.actual_checkout");
+
+                                    // Hanya tampil jika BELUM checkout
+                                    return empty($actualCheckout);
                                 })
                                 ->action(function (array $arguments, $livewire) {
                                     // Ambil ID dari state repeater
@@ -676,8 +803,8 @@ class ReservationForm
 
                                     // JavaScript untuk membuka di tab baru
                                     $livewire->js(<<<JS
-                            window.open("{$url}", "_blank", "noopener,noreferrer");
-                        JS);
+                                        window.open("{$url}", "_blank", "noopener,noreferrer");
+                                    JS);
                                 }),
 
                             // Delete Button (sudah ada default, tapi kita custom untuk konfirmasi)

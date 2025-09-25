@@ -114,6 +114,107 @@
                 @endif
             </div>
 
+            {{-- ====== GRID 2 kolom ====== --}}
+            <div class="grid-2">
+                {{-- KIRI --}}
+                <div class="space-y-4">
+                    @php
+                        $rbType  = strtoupper($res?->reserved_by_type ?? 'GUEST');
+                        $isGroup = $rbType === 'GROUP' && $res?->group;
+                        $rbTitle = $isGroup ? 'Reserved By — Company' : 'Reserved By — Guest';
+                        $rb      = $isGroup ? $res?->group : ($res?->guest ?? $guest);
+                    @endphp
+
+                    <div class="card">
+                        <div class="title">{{ $rbTitle }}</div>
+                        <div class="rows">
+                            <div class="row"><div class="k">Name</div><div>{{ $rb?->name ?? '-' }}</div></div>
+                            <div class="row"><div class="k">Address</div><div>{{ $rb?->address ?? '-' }}</div></div>
+                            <div class="row"><div class="k">City</div><div>{{ $rb?->city ?? '-' }}</div></div>
+                            <div class="row"><div class="k">Phone</div><div>{{ $rb?->phone ?? ($rb?->handphone ?? '-') }}</div></div>
+                            <div class="row"><div class="k">Email</div><div>{{ $rb?->email ?? '-' }}</div></div>
+                            @if ($isGroup && !empty($res?->group?->fax))
+                                <div class="row"><div class="k">Fax</div><div>{{ $res->group->fax }}</div></div>
+                            @endif
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="title">Detail Guest Information</div>
+                        <div class="rows">
+                            <div class="row"><div class="k">Name</div><div>{{ $guest?->display_name ?? ($guest?->name ?? '-') }}</div></div>
+                            <div class="row"><div class="k">Address</div><div>{{ $guest?->address ?? '-' }}</div></div>
+                            <div class="row"><div class="k">City/Country</div><div>{{ $guest?->city ?? '-' }}{{ $guest?->nationality ? ' / ' . $guest->nationality : '' }}</div></div>
+                            <div class="row"><div class="k">Profession</div><div>{{ $guest?->profession ?? '-' }}</div></div>
+                            <div class="row"><div class="k">Identity</div><div>{{ $guest?->id_type ?? '-' }}{{ $guest?->id_card ? ' — ' . $guest->id_card : '' }}</div></div>
+                            <div class="row"><div class="k">Birth</div><div>{{ $guest?->birth_place ? $guest->birth_place . ', ' : '' }}{{ $guest?->birth_date ? $fmtD($guest->birth_date) : '-' }}</div></div>
+                            <div class="row"><div class="k">Issued</div><div>{{ $guest?->issued_place ? $guest->issued_place . ', ' : '' }}{{ $guest?->issued_date ? $fmtD($guest->issued_date) : '-' }}</div></div>
+                            <div class="row"><div class="k">Phone</div><div>{{ $guest?->phone ?? '-' }}</div></div>
+                            <div class="row"><div class="k">Email</div><div>{{ $guest?->email ?? '-' }}</div></div>
+                            <div class="row">
+                                <div class="k">Room</div>
+                                <div>{{ $room?->room_no ?? '-' }}{{ $room?->type ? ' — ' . $room->type : '' }}
+                                    @if ($rg->breakfast ?? '' === 'Yes') <span class="pill" style="margin-left:6px">Breakfast</span> @endif
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="k">Pax</div>
+                                <div>
+                                    {{ (int) ($rg->jumlah_orang ?? ($rg->male ?? 0) + ($rg->female ?? 0) + ($rg->children ?? 0)) }}
+                                    <span class="muted"> (M {{ (int) ($rg->male ?? 0) }}, F {{ (int) ($rg->female ?? 0) }}, C {{ (int) ($rg->children ?? 0) }})</span>
+                                </div>
+                            </div>
+                            <div class="row"><div class="k">Extra Bed</div><div>{{ $extraQty > 0 ? $extraQty . ' — ' . $money($extraSub) : '-' }}</div></div>
+                        </div>
+                        {{-- ⬅️ Tidak ada tax di sini --}}
+                    </div>
+                </div>
+
+                {{-- KANAN --}}
+                <div class="space-y-4">
+                    <div class="card">
+                        <div class="title">Reservation Summary</div>
+                        <div class="rows">
+                            <div class="row"><div class="k">Purpose of Visit</div><div>{{ $res?->purpose ?? '-' }}</div></div>
+                            <div class="row"><div class="k">Length of Stay</div><div>{{ $nights }} Night(s)</div></div>
+                            <div class="row"><div class="k">Arrival</div><div>{{ $fmt($rg?->expected_checkin) }}</div></div>
+                            <div class="row"><div class="k">Departure</div><div>{{ $fmt($rg?->actual_checkout ?: Carbon::now('Asia/Makassar')) }}</div></div>
+                            <div class="row"><div class="k">Check-in</div><div>{{ $fmt($rg?->actual_checkin) }}</div></div>
+                            <div class="row"><div class="k">Company</div><div>{{ $res?->company ?? ($group?->company ?? '-') }}</div></div>
+                            <div class="row"><div class="k">Charge</div><div>{{ $res?->charge_to ?? 'Personal Account' }}</div></div>
+                            <div class="row"><div class="k">Rate Code / Type</div><div>{{ $rg?->rate_code ?? '-' }}{{ $rg?->rate_type ? ' — ' . $rg->rate_type : '' }}</div></div>
+                            <div class="row"><div class="k">Remarks</div><div>{{ $res?->remarks ?? '-' }}</div></div>
+                        </div>
+
+                        <table class="table" style="margin-top:8px">
+                            <tr><td class="k">Basic Rate</td><td class="v">{{ $money($basicRate) }}</td></tr>
+                            <tr><td class="k">Discount</td><td class="v">{{ number_format($rg?->discount_percent ?? 0, 2, ',', '.') }}%</td></tr>
+                            <tr><td class="k">After Discount / Night</td><td class="v"><strong>{{ $money($afterDiscPerNight) }}</strong></td></tr>
+                        </table>
+                    </div>
+
+                    <div class="card">
+                        <div class="title">Guest Bill</div>
+                        <div class="hb-body" style="padding:0">
+                            <table class="table">
+                                <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
+                                <tr><td class="k">Service (Rp)</td><td class="v">{{ $money($serviceRp) }}</td></tr>
+                                <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
+                                @if ($penaltyRp > 0)
+                                    <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
+                                @endif
+                                {{-- ❌ Tax tidak ditampilkan di sini --}}
+                            </table>
+                            {{-- SUBTOTAL (tanpa tax) --}}
+                            <div class="total">
+                                <div>SUBTOTAL (before tax)</div>
+                                <div>{{ $money($taxBase) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {{-- ====== FULL-WIDTH: Tabel ringkasan semua guest ====== --}}
             <div class="grid-1">
                 <div class="card">
@@ -271,7 +372,7 @@
                                     </tr>
 
                                     {{-- ⬇️ BARU: pindahkan deposit & balance ke tfoot --}}
-                                    @php
+                                    {{-- @php
                                         $dep = (int) ($res?->deposit ?? 0);
                                         $bal = max(0, $sumGrand - $dep);
                                     @endphp
@@ -284,111 +385,10 @@
                                         <td colspan="7" class="v" style="text-align:right">BALANCE DUE</td>
                                         <td class="v"><strong>{{ ReservationView::fmtMoney($bal) }}</strong></td>
                                         <td></td>
-                                    </tr>
+                                    </tr> --}}
                                 </tfoot>
 
                             </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {{-- ====== GRID 2 kolom ====== --}}
-            <div class="grid-2">
-                {{-- KIRI --}}
-                <div class="space-y-4">
-                    @php
-                        $rbType  = strtoupper($res?->reserved_by_type ?? 'GUEST');
-                        $isGroup = $rbType === 'GROUP' && $res?->group;
-                        $rbTitle = $isGroup ? 'Reserved By — Company' : 'Reserved By — Guest';
-                        $rb      = $isGroup ? $res?->group : ($res?->guest ?? $guest);
-                    @endphp
-
-                    <div class="card">
-                        <div class="title">{{ $rbTitle }}</div>
-                        <div class="rows">
-                            <div class="row"><div class="k">Name</div><div>{{ $rb?->name ?? '-' }}</div></div>
-                            <div class="row"><div class="k">Address</div><div>{{ $rb?->address ?? '-' }}</div></div>
-                            <div class="row"><div class="k">City</div><div>{{ $rb?->city ?? '-' }}</div></div>
-                            <div class="row"><div class="k">Phone</div><div>{{ $rb?->phone ?? ($rb?->handphone ?? '-') }}</div></div>
-                            <div class="row"><div class="k">Email</div><div>{{ $rb?->email ?? '-' }}</div></div>
-                            @if ($isGroup && !empty($res?->group?->fax))
-                                <div class="row"><div class="k">Fax</div><div>{{ $res->group->fax }}</div></div>
-                            @endif
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="title">Detail Guest Information</div>
-                        <div class="rows">
-                            <div class="row"><div class="k">Name</div><div>{{ $guest?->display_name ?? ($guest?->name ?? '-') }}</div></div>
-                            <div class="row"><div class="k">Address</div><div>{{ $guest?->address ?? '-' }}</div></div>
-                            <div class="row"><div class="k">City/Country</div><div>{{ $guest?->city ?? '-' }}{{ $guest?->nationality ? ' / ' . $guest->nationality : '' }}</div></div>
-                            <div class="row"><div class="k">Profession</div><div>{{ $guest?->profession ?? '-' }}</div></div>
-                            <div class="row"><div class="k">Identity</div><div>{{ $guest?->id_type ?? '-' }}{{ $guest?->id_card ? ' — ' . $guest->id_card : '' }}</div></div>
-                            <div class="row"><div class="k">Birth</div><div>{{ $guest?->birth_place ? $guest->birth_place . ', ' : '' }}{{ $guest?->birth_date ? $fmtD($guest->birth_date) : '-' }}</div></div>
-                            <div class="row"><div class="k">Issued</div><div>{{ $guest?->issued_place ? $guest->issued_place . ', ' : '' }}{{ $guest?->issued_date ? $fmtD($guest->issued_date) : '-' }}</div></div>
-                            <div class="row"><div class="k">Phone</div><div>{{ $guest?->phone ?? '-' }}</div></div>
-                            <div class="row"><div class="k">Email</div><div>{{ $guest?->email ?? '-' }}</div></div>
-                            <div class="row">
-                                <div class="k">Room</div>
-                                <div>{{ $room?->room_no ?? '-' }}{{ $room?->type ? ' — ' . $room->type : '' }}
-                                    @if ($rg->breakfast ?? '' === 'Yes') <span class="pill" style="margin-left:6px">Breakfast</span> @endif
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="k">Pax</div>
-                                <div>
-                                    {{ (int) ($rg->jumlah_orang ?? ($rg->male ?? 0) + ($rg->female ?? 0) + ($rg->children ?? 0)) }}
-                                    <span class="muted"> (M {{ (int) ($rg->male ?? 0) }}, F {{ (int) ($rg->female ?? 0) }}, C {{ (int) ($rg->children ?? 0) }})</span>
-                                </div>
-                            </div>
-                            <div class="row"><div class="k">Extra Bed</div><div>{{ $extraQty > 0 ? $extraQty . ' — ' . $money($extraSub) : '-' }}</div></div>
-                        </div>
-                        {{-- ⬅️ Tidak ada tax di sini --}}
-                    </div>
-                </div>
-
-                {{-- KANAN --}}
-                <div class="space-y-4">
-                    <div class="card">
-                        <div class="title">Reservation Summary</div>
-                        <div class="rows">
-                            <div class="row"><div class="k">Purpose of Visit</div><div>{{ $res?->purpose ?? '-' }}</div></div>
-                            <div class="row"><div class="k">Length of Stay</div><div>{{ $nights }} Night(s)</div></div>
-                            <div class="row"><div class="k">Arrival</div><div>{{ $fmt($rg?->expected_checkin) }}</div></div>
-                            <div class="row"><div class="k">Departure</div><div>{{ $fmt($rg?->actual_checkout ?: Carbon::now('Asia/Makassar')) }}</div></div>
-                            <div class="row"><div class="k">Check-in</div><div>{{ $fmt($rg?->actual_checkin) }}</div></div>
-                            <div class="row"><div class="k">Company</div><div>{{ $res?->company ?? ($group?->company ?? '-') }}</div></div>
-                            <div class="row"><div class="k">Charge</div><div>{{ $res?->charge_to ?? 'Personal Account' }}</div></div>
-                            <div class="row"><div class="k">Rate Code / Type</div><div>{{ $rg?->rate_code ?? '-' }}{{ $rg?->rate_type ? ' — ' . $rg->rate_type : '' }}</div></div>
-                            <div class="row"><div class="k">Remarks</div><div>{{ $res?->remarks ?? '-' }}</div></div>
-                        </div>
-
-                        <table class="table" style="margin-top:8px">
-                            <tr><td class="k">Basic Rate</td><td class="v">{{ $money($basicRate) }}</td></tr>
-                            <tr><td class="k">Discount</td><td class="v">{{ number_format($rg?->discount_percent ?? 0, 2, ',', '.') }}%</td></tr>
-                            <tr><td class="k">After Discount / Night</td><td class="v"><strong>{{ $money($afterDiscPerNight) }}</strong></td></tr>
-                        </table>
-                    </div>
-
-                    <div class="card">
-                        <div class="title">Guest Bill</div>
-                        <div class="hb-body" style="padding:0">
-                            <table class="table">
-                                <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
-                                <tr><td class="k">Service (Rp)</td><td class="v">{{ $money($serviceRp) }}</td></tr>
-                                <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
-                                @if ($penaltyRp > 0)
-                                    <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
-                                @endif
-                                {{-- ❌ Tax tidak ditampilkan di sini --}}
-                            </table>
-                            {{-- SUBTOTAL (tanpa tax) --}}
-                            <div class="total">
-                                <div>SUBTOTAL (before tax)</div>
-                                <div>{{ $money($taxBase) }}</div>
-                            </div>
                         </div>
                     </div>
                 </div>

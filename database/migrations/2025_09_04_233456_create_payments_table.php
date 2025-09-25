@@ -10,7 +10,9 @@ return new class extends Migration {
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId('reservation_id')->constrained('reservations')->cascadeOnDelete();
+            $table->foreignId('reservation_id')
+                ->constrained('reservations')
+                ->cascadeOnDelete();
             $table->foreignId('hotel_id')->constrained()->cascadeOnDelete();
 
             $table->unsignedInteger('amount');  // dalam satuan terkecil (misal rupiah tanpa desimal)

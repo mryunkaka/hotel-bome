@@ -9,7 +9,7 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('rooms', function (Blueprint $table) {
-            $table->string('status', 10)->default('VC')->after('price')->index(); // TAMBAH
+            $table->string('status', 10)->default('VCI')->after('price')->index(); // TAMBAH
             $table->timestamp('status_changed_at')->nullable()->after('status');   // TAMBAH
         });
 

@@ -56,7 +56,12 @@ class ReservationGuestsTable
             ->recordActions([
                 EditAction::make(),
             ])
-            ->modifyQueryUsing(fn(Builder $query) => $query->whereNotNull('actual_checkin'))
+            ->modifyQueryUsing(
+                fn(Builder $query) =>
+                $query->whereNotNull('actual_checkin')
+                    ->whereNull('actual_checkout')
+                    ->latest('created_at')
+            )
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),

@@ -19,7 +19,8 @@ class ReservationsTable
     {
         return $table
             ->modifyQueryUsing(function (Builder $query) {
-                $query->with(['guest', 'group', 'creator']);
+                $query->with(['guest', 'group', 'creator'])
+                    ->latest('created_at');
             })
             ->columns([
                 TextColumn::make('reservation_no')

@@ -39,13 +39,14 @@ class RoomBoardForm
     {
         return [
             'occupied'      => Room::where('status', Room::ST_OCC)->count(),
+            'long_stay'     => Room::where('status', Room::ST_LS)->count(),   // ✅ TAMBAH
+            'reserved'      => Room::where('status', Room::ST_RS)->count(),   // ✅ TAMBAH
             'exp_dep'       => Room::where('status', Room::ST_ED)->count(),
             'vacant_clean'  => Room::where('status', Room::ST_VC)->count(),
-            'inspection'    => Room::where('status', Room::ST_VCI)->count(), // VCI
+            'inspection'    => Room::where('status', Room::ST_VCI)->count(),
             'vacant_dirty'  => Room::where('status', Room::ST_VD)->count(),
             'house_use'     => Room::where('status', Room::ST_HU)->count(),
             'oo'            => Room::where('status', Room::ST_OOO)->count(),
-            'long_stay'     => 0, // tak ada di model — biarkan 0
         ];
     }
 }

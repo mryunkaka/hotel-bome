@@ -61,9 +61,14 @@
         .sub{font-weight:600;margin-top:2px}
         .hotel-meta{font-size:7.6px;line-height:1.25}
 
-        table.info{width:100%;border-collapse:collapse;table-layout:fixed;margin:4px 0 2px}
-        table.info td{padding:1px 0;vertical-align:top}
-        .lbl{color:#374151;font-weight:600;white-space:nowrap}
+        /* ===== Info header (2 kolom sejajar) - DomPDF Compatible ===== */
+        table.info { width:100%; border-collapse:collapse; margin:4px 0 2px }
+        table.info td { padding:1px 2px; vertical-align:top; word-wrap:break-word }
+        table.info .lbl { color:#374151; font-weight:600; width:20%; }
+        table.info .sep { width:8px; text-align:center; }  /* titik dua */
+        table.info .gap { width:15px; }                    /* jarak antar kolom */
+        table.info .val { width:auto; padding-right:4px; }
+
         .c{width:8px;text-align:center}
         .line{border-top:1px solid #1F2937;margin:6px 0}
 
@@ -76,14 +81,22 @@
         .muted{color:#6b7280}
         .tiny{font-size:7px}
 
-        /* Lebar kolom (total ≈100%) */
-        .col-guest{width:28%}
-        .col-pax{width:7%;text-align:center}
-        .col-night{width:11%;text-align:center}
-        .col-dt{width:17%;text-align:center}          /* check-in */
-        .col-dt2{width:17%;text-align:center}         /* check-out */
-        .col-status{width:15%;text-align:center}
-        .col-amt{width:7%;text-align:right}           /* 5 kolom amount × 7% = 35% */
+        /* Lebar kolom (total = 100%) */
+        .col-guest  { width: 20%; }      /* guest lebih ramping, tetap muat 2 baris info */
+        .col-pax    { width: 5%;  text-align: center; }
+        .col-night  { width: 5%;  text-align: center; }
+        .col-dt,
+        .col-dt2    { width: 8%;  text-align: center; }  /* cukup untuk d/m H:i */
+        .col-status { width: 5%;  text-align: center; }
+        /* 5 kolom nominal × 3% = 15% */
+        .col-amts   { width: 6%; }
+
+        /* Paksa kolom nominal (kolom 7..11) rata kanan & nowrap */
+        .grid td:nth-child(n+7):nth-child(-n+11) {
+            text-align: right !important;
+            white-space: nowrap;
+        }
+
 
         /* Baris total */
         table.total{width:100%;border-collapse:collapse;margin-top:6px;font-size:8px}
@@ -113,21 +126,36 @@
     {{-- ===== INFO RESERVED BY (tanpa detail 1 guest) ===== --}}
     <table class="info">
         <tr>
-            <td class="lbl" style="width:30mm">{{ $isGroup ? 'Company' : 'Reserved By' }}</td><td class="c">:</td><td>{{ $rbName }}</td>
-            <td style="width:8mm"></td>
-            <td class="lbl">Guests Registered</td><td class="c">:</td><td>{{ $totalGuestsRegistered }}</td>
+            <td class="lbl">{{ $isGroup ? 'Company' : 'Reserved By' }}</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $rbName }}</td>
+            <td class="gap"></td>
+            <td class="lbl">Deposit</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $m($depositReservation) }}</td>
         </tr>
+
         <tr>
-            <td class="lbl">Address</td><td class="c">:</td><td class="clip">{{ $rbAddr }}</td>
-            <td></td>
-            <td class="lbl">City</td><td class="c">:</td><td>{{ $rbCity }}</td>
+            <td class="lbl">Address</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $rbAddr }}</td>
+            <td class="gap"></td>
+            <td class="lbl">City</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $rbCity }}</td>
         </tr>
+
         <tr>
-            <td class="lbl">Phone</td><td class="c">:</td><td>{{ $rbPhone }}</td>
-            <td></td>
-            <td class="lbl">Email</td><td class="c">:</td><td class="clip">{{ $rbEmail }}</td>
+            <td class="lbl">Phone</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $rbPhone }}</td>
+            <td class="gap"></td>
+            <td class="lbl">Email</td>
+            <td class="sep">:</td>
+            <td class="val">{{ $rbEmail }}</td>
         </tr>
     </table>
+
 
     <div class="line"></div>
 
@@ -137,15 +165,15 @@
             <tr>
                 <th class="col-guest">Guest</th>
                 <th class="col-pax">Pax</th>
-                <th class="col-night">Nights</th>
-                <th class="col-dt">Check-in</th>
-                <th class="col-dt2">Check-out</th>
+                <th class="col-night">N</th>
+                <th class="col-dt">C-I</th>
+                <th class="col-dt2">C-O</th>
                 <th class="col-status">Status</th>
-                <th class="col-amt">Room×Night</th>
-                <th class="col-amt">Service</th>
-                <th class="col-amt">Extra</th>
-                <th class="col-amt">Penalty</th>
-                <th class="col-amt">Amount</th>
+                <th class="col-amts">R × N</th>
+                <th class="col-amts">Service</th>
+                <th class="col-amts">Extra</th>
+                <th class="col-amts">Penalty</th>
+                <th class="col-amts">Amount</th>
             </tr>
         </thead>
         <tbody>
@@ -208,17 +236,33 @@
                 <td class="center">{{ $ds($in) }}</td>
                 <td class="center">{{ $ds($out) }}</td>
                 <td class="center">{{ $g->actual_checkout ? 'CO' : 'IH' }}</td>
-                <td class="right">{{ $m($gRateAfter * $n) }}</td>
-                <td class="right">{{ $m($gServiceRp) }}</td>
-                <td class="right">{{ $m($gExtraRp) }}</td>
-                <td class="right">{{ $m($gPenaltyRp) }}</td>
-                <td class="right"><strong>{{ $m($gTaxBase) }}</strong></td>
+                <td class="center">{{ $m($gRateAfter * $n) }}</td>
+                <td class="center">{{ $m($gServiceRp) }}</td>
+                <td class="center">{{ $m($gExtraRp) }}</td>
+                <td class="center">{{ $m($gPenaltyRp) }}</td>
+                <td class="center"><strong>{{ $m($gTaxBase) }}</strong></td>
             </tr>
         @endforeach
         </tbody>
     </table>
 
     @php $sumGrand = $sumBase + $sumTax; @endphp
+
+    @php
+        // Total deposit dari reservation (sudah ada: $depositReservation)
+        // Total pembayaran yang sudah tercatat di tabel payments untuk reservation ini:
+        $amountPaid = 0;
+        if ($resv?->id) {
+            $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)->sum('amount');
+        }
+
+        // Total yang harus dibayar setelah dikurangi deposit
+        $dueAfterDeposit = max(0, $sumGrand - $depositReservation);
+
+        // Hitung kembalian atau sisa tagihan
+        $change    = max(0, $amountPaid - $dueAfterDeposit);
+        $remaining = max(0, $dueAfterDeposit - $amountPaid);
+    @endphp
 
     {{-- ===== FOOTER TOTALS ===== --}}
     <table class="total">
@@ -234,21 +278,35 @@
             <td class="k" style="text-align:right"><strong>TOTAL (Amount Due + Tax)</strong></td>
             <td class="v"><strong>{{ $m($sumGrand) }}</strong></td>
         </tr>
-        @php
-            $depShown = min($depositReservation, $sumGrand);
-            $balance  = max(0, $sumGrand - $depositReservation);
-        @endphp
-        @if ($depShown > 0)
+
+        {{-- Amount Paid (total pembayaran yang tercatat) --}}
+        <tr>
+            <td class="k" style="text-align:right">Amount Paid</td>
+            <td class="v">{{ $m($amountPaid) }}</td>
+        </tr>
+
+        {{-- (-) Deposit --}}
+        @if ($depositReservation > 0)
             <tr>
                 <td class="k" style="text-align:right">(-) Deposit</td>
-                <td class="v">{{ $m($depShown) }}</td>
+                <td class="v">{{ $m($depositReservation) }}</td>
             </tr>
         @endif
-        <tr>
-            <td class="k" style="text-align:right"><strong>BALANCE DUE</strong></td>
-            <td class="v"><strong>{{ $m($balance) }}</strong></td>
-        </tr>
+
+        {{-- Baris akhir: Change (jika lebih) atau Balance Due (jika kurang) --}}
+        @if ($change > 0)
+            <tr>
+                <td class="k" style="text-align:right"><strong>CHANGE</strong></td>
+                <td class="v"><strong>{{ $m($change) }}</strong></td>
+            </tr>
+        @else
+            <tr>
+                <td class="k" style="text-align:right"><strong>BALANCE DUE</strong></td>
+                <td class="v"><strong>{{ $m($remaining) }}</strong></td>
+            </tr>
+        @endif
     </table>
+
 
     <div class="line"></div>
 

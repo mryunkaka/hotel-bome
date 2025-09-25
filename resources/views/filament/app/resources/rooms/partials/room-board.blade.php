@@ -30,7 +30,20 @@
 @media (min-width:1024px){.rb-layout{grid-template-columns:260px 1fr}}
 /* ===== Kartu tile ===== */
 .rb-card{border-radius:12px;overflow:hidden;background:#fff;border:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.rb-head{background:#f3f4f6;padding:6px 10px;font:700 10px/1 system-ui,Arial;display:flex;justify-content:space-between;align-items:center;letter-spacing:.2px}
+.rb-head {
+  background:#f3f4f6;
+  padding:6px 10px;
+  font:700 10px/1.2 system-ui,Arial; /* naikkan line-height sedikit */
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start; /* biar teks bisa ke atas */
+  letter-spacing:.2px;
+}
+.rb-head span {
+  white-space:normal;   /* IZINKAN teks turun */
+  word-break:break-word;/* Pecah kata panjang */
+  max-width:80%;        /* Biar badge di kanan tidak terdorong ke bawah */
+}
 .rb-badge{font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.15);color:#111}
 .rb-badge.muted{opacity:.35}
 .rb-tile{height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
@@ -175,13 +188,13 @@
                 <div class="rb-card group" x-data="{ open: false }" wire:key="room-tile-{{ $room->id }}">
                     <div class="rb-head">
                         <span>{{ $type }}</span>
-                        <span class="rb-badge {{ $muted }}">{{ $badge ?: ' ' }}</span>
+                        {{-- <span class="rb-badge {{ $muted }}">{{ $badge ?: ' ' }}</span> --}}
                     </div>
 
                     <div class="rb-tile {{ $tile }}">
                         <button type="button" class="tile-link" @click="open = true" aria-label="Open room {{ $roomNo }}">
                             <div class="rb-num">{{ $roomNo }}</div>
-                            {{-- <div class="rb-code">{{ $code }}</div> --}}
+                            <div class="rb-code">{{ $code }}</div>
                             <span class="cta">Open</span>
                         </button>
                     </div>

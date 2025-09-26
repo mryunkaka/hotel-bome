@@ -26,9 +26,36 @@ class ListReservations extends ListRecords
                 ->color('primary')
                 ->requiresConfirmation(false)
                 ->action(function () {
-                    $user = Auth::user();
+                    $user    = Auth::user();
                     $hotelId = (int) (session('active_hotel_id') ?? 1);
 
+                    // ini yang ditambahkan: cek apakah sudah ada reservation "kosong" (tanpa guest) yang bisa dipakai ulang
+                    $existing = Reservation::query()
+                        ->where('hotel_id', $hotelId)
+                        ->whereNull('guest_id')          // belum diisi tamu
+                        ->whereNull('group_id')          // bukan group juga
+                        // opsional pengaman: belum check-in/checkout dan masih "fresh"
+                        ->whereNull('checkin_date')
+                        ->whereNull('checkout_date')
+                        ->whereDate('created_at', today())        // ⬅️ hanya yang dibuat hari ini
+                        ->where('created_by', $user->id)
+                        ->latest('id')
+                        ->first();
+
+                    if ($existing) {
+                        // Tidak membuat nomor baru—langsung pakai reservation tersebut
+                        Notification::make()
+                            ->title('Continue existing reservation')
+                            ->body("No: {$existing->reservation_no} (waiting for guest)")
+                            ->info()
+                            ->send();
+
+                        return redirect()->to(
+                            ReservationResource::getUrl('edit', ['record' => $existing])
+                        );
+                    }
+
+                    // Tidak ada draft/entry tanpa guest → buat baru
                     $record = DB::transaction(function () use ($user, $hotelId) {
                         return Reservation::create([
                             'reservation_no'   => Reservation::generateReservationNo($hotelId),
@@ -42,8 +69,8 @@ class ListReservations extends ListRecords
                             'deposit'          => 0,            // default 0
                             'reserved_title'   => 'MR',         // MR/MRS/MS
                             'reserved_by'      => $user->name ?? 'Guest',
-                            'entry_date'      => Carbon::now(), // default sekarang
-                            'expected_arrival' => now()->setTime(12, 0),                            // default 1 jam lagi
+                            'entry_date'       => Carbon::now(),
+                            'expected_arrival' => now()->setTime(13, 0),
                             // ====== audit fields jika ada di tabel ======
                             'created_by'       => $user->id ?? null,
                             'updated_by'       => $user->id ?? null,
@@ -57,9 +84,10 @@ class ListReservations extends ListRecords
                         ->send();
 
                     // Redirect langsung ke halaman edit
-                    return redirect()->to(ReservationResource::getUrl('edit', ['record' => $record]));
+                    return redirect()->to(
+                        ReservationResource::getUrl('edit', ['record' => $record])
+                    );
                 }),
-
         ];
     }
 }

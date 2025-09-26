@@ -383,7 +383,8 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
     $guest->loadMissing([
         'guest:id,name,salutation,city,phone,email,address',
         'room:id,room_no,type,price',
-        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,deposit,created_at,entry_date,reserved_by_type,guest_id',
+        // ====== GANTI: tambahkan deposit_room & deposit_card, hapus deposit ======
+        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,deposit_room,deposit_card,created_at,entry_date,reserved_by_type,guest_id',
         'reservation.creator:id,name',
         'reservation.group:id,name,address,city,phone,handphone,fax,email',
         'reservation.guest:id,name,salutation,address,city,phone,email',
@@ -473,6 +474,10 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
     $clerkName = $reservation->creator?->name;
     $reservedByForPrint = $clerkName ?: ($billTo['name'] ?? null);
 
+    // ====== TAMBAHAN: ambil DP reservasi & jaminan check-in dari reservation ======
+    $depositRoom = (int) ($reservation->deposit_room ?? 0); // DP Reservasi
+    $depositCard = (int) ($reservation->deposit_card ?? 0); // Jaminan saat Check-in
+
     $viewData = [
         'paper'       => 'A4',
         'orientation' => $orientation,
@@ -496,7 +501,7 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
 
         'billTo'      => $billTo,
 
-        // Baris tunggal (RG ini saja) + FIELD TAMBAHAN
+        // Baris tunggal (RG ini saja) + FIELD TAMBAHAN (tetap)
         'row'         => [
             'room_no'       => $guest->room?->room_no ?: ('#' . $guest->room_id),
             'category'      => $guest->room?->type ?: '-',
@@ -524,8 +529,12 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'footerText'  => 'Printed by ' . ($clerkName ?? 'System'),
         'showSignature' => true,
 
-        // kirim juga objek reservation jika Blade ingin akses expected_arrival
+        // kirim juga objek reservation (tetap)
         'reservation' => $reservation,
+
+        // ====== KIRIM DEPOSIT BARU KE VIEW ======
+        'deposit_room' => $depositRoom,
+        'deposit_card' => $depositCard,
     ];
 
     if (request()->boolean('html')) {
@@ -677,6 +686,8 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
     // Reserved By: kalau kolom reserved_by tidak diisi, pakai nama pihak (group/guest) dari $billTo
     $reservedByForPrint = $clerkName ?: ($reservation->reserved_by ?: ($billTo['name'] ?? null));
 
+    $depositRoom = (int) ($reservation->deposit_room ?? 0); // DP Reservasi
+
     $viewData = [
         'paper'       => 'A4',
         'orientation' => $orientation,
@@ -697,7 +708,7 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         // header kanan
         'expected_arrival'   => $reservation->expected_arrival,
         'expected_departure' => $reservation->expected_departure,
-        'deposit'            => $reservation->deposit,
+        'deposit_room' => $depositRoom,
 
         // header kiri
         'payment'     => ['method' => strtolower($reservation->method ?? 'personal'), 'ref' => null],

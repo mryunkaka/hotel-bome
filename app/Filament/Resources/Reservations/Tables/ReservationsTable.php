@@ -20,7 +20,11 @@ class ReservationsTable
         return $table
             ->modifyQueryUsing(function (Builder $query) {
                 $query->with(['guest', 'group', 'creator'])
-                    ->latest('created_at');
+                    ->latest('created_at')
+                    // === tambahan: tampilkan hanya reservasi yang masih punya RG belum check-in
+                    ->whereHas('reservationGuests', function ($q) {
+                        $q->whereNull('actual_checkin'); // <-- inti filter
+                    });
             })
             ->columns([
                 TextColumn::make('reservation_no')
@@ -46,7 +50,6 @@ class ReservationsTable
                         'success' => fn($record) => (bool) $record->guest_id && ! $record->group_id,
                     ])
                     ->sortable()
-                    // searchable custom untuk kolom virtual
                     ->searchable(),
                 TextColumn::make('expected_arrival')
                     ->searchable()

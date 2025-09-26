@@ -31,7 +31,7 @@ class CreateReservation extends CreateRecord
             $data['expected_departure'] = \Illuminate\Support\Carbon::parse($data['expected_arrival'])
                 ->startOfDay()
                 ->addDays(max(1, (int) $data['nights']))
-                ->setTime(12, 0);
+                ->setTime(13, 0);
         }
 
         // Buang field UI-only

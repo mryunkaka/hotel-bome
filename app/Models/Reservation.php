@@ -28,8 +28,8 @@ class Reservation extends Model
         'expected_departure',
         'checkin_date',
         'checkout_date',
-        'deposit_type',
-        'deposit',
+        'deposit_room',
+        'deposit_card',
         'reserved_by_type',
         'entry_date',
         'num_guests',
@@ -43,7 +43,8 @@ class Reservation extends Model
         'checkin_date'      => 'datetime',
         'checkout_date'     => 'datetime',
         'entry_date'        => 'datetime',
-        'deposit'           => 'integer',
+        'deposit_room'      => 'integer',
+        'deposit_card'      => 'integer',
     ];
 
     public function getLengthOfStayAttribute(): ?int
@@ -99,7 +100,24 @@ class Reservation extends Model
     protected static function booted(): void
     {
         static::created(fn(self $r) => $r->syncRoomStatuses());
-        static::updated(fn(self $r) => $r->syncRoomStatuses());
+        static::updated(function (self $r): void {
+            // Jika header tanggal berubah, sinkronkan ke anak
+            if ($r->wasChanged(['expected_arrival', 'expected_departure'])) {
+                $payload = [];
+                if ($r->expected_arrival) {
+                    $payload['expected_checkin'] = $r->expected_arrival;
+                }
+                if ($r->expected_departure) {
+                    $payload['expected_checkout'] = $r->expected_departure;
+                }
+                if (! empty($payload)) {
+                    $r->reservationGuests()->update($payload);
+                }
+            }
+
+            // Hook milikmu untuk status kamar tetap jalan
+            $r->syncRoomStatuses();
+        });
 
         // Kunci ke hotel konteks aktif (super admin via session, user biasa via hotel_id)
         static::creating(function (self $m): void {

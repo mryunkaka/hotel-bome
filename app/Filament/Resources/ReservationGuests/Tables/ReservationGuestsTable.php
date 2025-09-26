@@ -8,6 +8,7 @@ use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Filament\Actions\Action as TableAction;
 
 class ReservationGuestsTable
 {
@@ -15,10 +16,10 @@ class ReservationGuestsTable
     {
         return $table
             ->columns([
-                TextColumn::make('reservation.reservation_no')
-                    ->label('Reservation No')
-                    ->searchable()
-                    ->sortable(),
+                // TextColumn::make('reservation.reservation_no')
+                //     ->label('Reservation No')
+                //     ->searchable()
+                //     ->sortable(),
 
                 TextColumn::make('actual_checkin')
                     ->label('Actual Checkin')
@@ -54,7 +55,11 @@ class ReservationGuestsTable
                 //
             ])
             ->recordActions([
-                EditAction::make(),
+                TableAction::make('print_checkin')
+                    ->label('Print Check-in')
+                    ->icon('heroicon-m-printer')
+                    ->url(fn($record) => route('reservation-guests.print', ['guest' => $record->id]))
+                    ->openUrlInNewTab(),
             ])
             ->modifyQueryUsing(
                 fn(Builder $query) =>

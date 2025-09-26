@@ -236,18 +236,25 @@ final class ReservationView
             $rows = self::buildRowsFromItems($ctx['items'], $ctx['ps'] ?? null);
         }
 
-        // 2) tax lookup (controller override > derive)
-        $taxLookup = self::ensureTaxLookup($rows, $ctx['tax_lookup'] ?? null);
+        // 2) tax lookup (controller override > derive), dukung snake & camel
+        $taxLookupInput = $ctx['tax_lookup'] ?? ($ctx['taxLookup'] ?? null);
+        $taxLookup = self::ensureTaxLookup($rows, $taxLookupInput);
 
         // 3) enrich dari reservation_guests
         [$rowsEnriched, $extraTaxMap] = self::enrichRows($rows, $ctx['hotel'] ?? null);
         // gabungkan tax map dari enrich (kalau ada)
         $taxLookup = $extraTaxMap ? ($taxLookup + $extraTaxMap) : $taxLookup;
 
-        // 4) header summaries
-        $depositVal    = isset($ctx['deposit']) ? (float)$ctx['deposit'] : (float)($ctx['paid_total'] ?? 0);
-        $reservedTitle = $ctx['reserved_title'] ?? null;
-        $reservedBy    = $ctx['reserved_by']    ?? (($ctx['billTo']['name'] ?? null) ?? null);
+        // 4) header summaries & deposits (dukung snake & camel + legacy)
+        $depositRoom = isset($ctx['deposit_room']) ? (float)$ctx['deposit_room']
+            : (isset($ctx['depositRoom']) ? (float)$ctx['depositRoom']
+                : (isset($ctx['deposit']) ? (float)$ctx['deposit'] : (float)($ctx['paid_total'] ?? ($ctx['paidTotal'] ?? 0))));
+
+        $depositCard = isset($ctx['deposit_card']) ? (float)$ctx['deposit_card']
+            : (isset($ctx['depositCard']) ? (float)$ctx['depositCard'] : 0.0);
+
+        $reservedTitle = $ctx['reserved_title'] ?? ($ctx['reservedTitle'] ?? null);
+        $reservedBy    = $ctx['reserved_by']    ?? ($ctx['reservedBy']    ?? (($ctx['billTo']['name'] ?? null) ?? null));
         $reservedFull  = trim(($reservedTitle ? ($reservedTitle . ' ') : '') . ($reservedBy ?? ''));
 
         $clerkName = $ctx['clerkName'] ?? ($ctx['clerk'] ?? null);
@@ -260,13 +267,21 @@ final class ReservationView
             ($hotel?->city     ? $hotel->city : null),
         ]);
 
+        // NOTE: depositVal dipertahankan untuk kompatibilitas lama (isi = Room Deposit)
         return [
-            'rows'         => $rowsEnriched,
-            'taxLookup'    => $taxLookup,
-            'depositVal'   => $depositVal,
-            'reservedFull' => $reservedFull,
-            'clerkName'    => $clerkName,
-            'hotelRight'   => $hotelRight,
+            'rows'          => $rowsEnriched,
+            'taxLookup'     => $taxLookup,
+            'depositVal'    => $depositRoom,
+
+            // keluarkan keduanya agar view bebas pakai camel/snake:
+            'depositRoom'   => $depositRoom,
+            'deposit_room'  => $depositRoom,
+            'depositCard'   => $depositCard,
+            'deposit_card'  => $depositCard,
+
+            'reservedFull'  => $reservedFull,
+            'clerkName'     => $clerkName,
+            'hotelRight'     => $hotelRight,
         ];
     }
 }

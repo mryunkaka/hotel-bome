@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Session;
-use Illuminate\Support\Carbon;         // TAMBAH
+use Illuminate\Validation\ValidationException;
 use App\Models\Room;                   // TAMBAH
+use Illuminate\Support\Carbon;         // TAMBAH
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ReservationGuest extends Model
 {
@@ -137,6 +138,45 @@ class ReservationGuest extends Model
         return $this->rate_after_tax + $this->extra_bed_total;
     }
 
+    protected static function intify(mixed $v): int
+    {
+        if ($v === null || $v === '') return 0;
+        // buang non-digit aman untuk "number" maupun string
+        return (int) preg_replace('/\D+/', '', (string) $v);
+    }
+
+    /* ===== Mutators agar field numeric bersih ===== */
+    public function setMaleAttribute($value): void
+    {
+        $this->attributes['male'] = max(0, static::intify($value));
+    }
+
+    public function setFemaleAttribute($value): void
+    {
+        $this->attributes['female'] = max(0, static::intify($value));
+    }
+
+    public function setChildrenAttribute($value): void
+    {
+        $this->attributes['children'] = max(0, static::intify($value));
+    }
+
+    public function setJumlahOrangAttribute($value): void
+    {
+        // tetap boleh di-set manual, tapi jaga agar tidak < 1
+        $this->attributes['jumlah_orang'] = max(1, static::intify($value));
+    }
+
+    /* ===== Recompute jumlah_orang sebelum simpan ===== */
+    protected function recomputePeople(): void
+    {
+        $male     = static::intify($this->male ?? 0);
+        $female   = static::intify($this->female ?? 0);
+        $children = static::intify($this->children ?? 0);
+
+        $this->attributes['jumlah_orang'] = max(1, $male + $female + $children);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Booted (event hooks)
@@ -149,12 +189,16 @@ class ReservationGuest extends Model
             $m->hotel_id = Session::get('active_hotel_id')
                 ?? Auth::user()?->hotel_id
                 ?? $m->hotel_id;
+
+            $m->recomputePeople();
         });
 
         static::updating(function (self $m): void {
             $m->hotel_id = Session::get('active_hotel_id')
                 ?? Auth::user()?->hotel_id
                 ?? $m->hotel_id;
+
+            $m->recomputePeople();
 
             // Jika pindah kamar, pulihkan status kamar lama (jika tidak ada tamu aktif lain)
             if ($m->isDirty('room_id')) {
@@ -166,6 +210,67 @@ class ReservationGuest extends Model
                     }
                 }
             }
+        });
+
+        static::saving(function (self $m): void {
+            // ===== existing =====
+            $m->recomputePeople();
+
+            // ====== ⬇️ VALIDASI BARU: DUPLIKASI GUEST & ROOM ⬇️ ======
+
+            // Siapkan nilai pembanding
+            $currentId = $m->getKey() ?? 0;
+            $hotelId   = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? $m->hotel_id;
+
+            // ---- 1) Cegah guest ganda di tanggal yang sama ----
+            if (!empty($m->guest_id)) {
+                $dates = [];
+
+                if (!empty($m->expected_checkin)) {
+                    $dates[] = Carbon::parse($m->expected_checkin)->toDateString();
+                }
+                if (!empty($m->actual_checkin)) {
+                    $dates[] = Carbon::parse($m->actual_checkin)->toDateString();
+                }
+
+                if (!empty($dates)) {
+                    $guestConflict = static::query()
+                        ->when($hotelId, fn($q) => $q->where('hotel_id', $hotelId))
+                        ->where('guest_id', $m->guest_id)
+                        ->where('id', '!=', $currentId)
+                        ->where(function ($q) use ($dates) {
+                            foreach ($dates as $d) {
+                                $q->orWhereDate('expected_checkin', $d)
+                                    ->orWhereDate('actual_checkin',   $d);
+                            }
+                        })
+                        ->exists();
+
+                    if ($guestConflict) {
+                        throw ValidationException::withMessages([
+                            'guest_id' => 'Guest sudah ada pada tanggal yang sama (expected / actual check-in).',
+                        ]);
+                    }
+                }
+            }
+
+            // ---- 2) Cegah room ganda (kecuali yang lama sudah checkout) ----
+            if (!empty($m->room_id)) {
+                $roomConflict = static::query()
+                    ->when($hotelId, fn($q) => $q->where('hotel_id', $hotelId))
+                    ->where('room_id', $m->room_id)
+                    ->where('id', '!=', $currentId)
+                    ->whereNull('actual_checkout') // hanya blokir jika yang lain belum checkout
+                    ->exists();
+
+                if ($roomConflict) {
+                    throw ValidationException::withMessages([
+                        'room_id' => 'Kamar sudah dipakai oleh tamu lain yang belum checkout.',
+                    ]);
+                }
+            }
+
+            // ====== ⬆️ VALIDASI BARU SELESAI ⬆️ ======
         });
 
         // === TAMBAHAN: sinkron saat created/updated/deleted ===

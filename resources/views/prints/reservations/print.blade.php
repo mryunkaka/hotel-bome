@@ -16,27 +16,29 @@
 
         // Siapkan semua variabel untuk print
         $prepared = ReservationView::prepareForPrint([
-            'rows' => $rows ?? null,
-            'items' => $items ?? null,
-            'ps' => $ps ?? null,
-            'tax_lookup' => $taxLookup ?? null,
-            'deposit' => $deposit ?? null,
-            'paid_total' => $paid_total ?? null,
-            'reserved_title' => $reserved_title ?? null,
-            'reserved_by' => $reserved_by ?? null,
-            'billTo' => $billTo ?? [],
-            'hotel' => $hotel ?? null,
-            'clerkName' => $clerkName ?? null,
-            'clerk' => $clerk ?? null,
+            'rows'          => $rows ?? null,
+            'items'         => $items ?? null,
+            'ps'            => $ps ?? null,
+            'taxLookup'     => $taxLookup ?? null,
+            'depositRoom'   => $deposit_room ?? ($deposit ?? null), // fallback kalau ada legacy
+            'depositCard'   => $deposit_card ?? null,
+            'paidTotal'     => $paid_total ?? null,
+            'reservedTitle' => $reserved_title ?? null,
+            'reservedBy'    => $reserved_by ?? null,
+            'billTo'        => $billTo ?? [],
+            'hotel'         => $hotel ?? null,
+            'clerkName'     => $clerkName ?? null,
+            'clerk'         => $clerk ?? null,
         ]);
 
-        // Unpack
-        $rows = $prepared['rows'];
-        $taxLookup = $prepared['taxLookup'];
-        $depositVal = $prepared['depositVal'];
-        $reservedFull = $prepared['reservedFull'];
-        $clerkName = $prepared['clerkName'];
-        $hotelRight = $prepared['hotelRight'];
+        // Unpack dengan guard
+        $rows         = $prepared['rows']        ?? [];
+        $taxLookup    = $prepared['taxLookup']   ?? null;
+        $deposit_room = $prepared['depositRoom'] ?? 0;
+        $deposit_card = $prepared['depositCard'] ?? 0;
+        $clerkName    = $prepared['clerkName']   ?? null;
+        $hotelRight   = $prepared['hotelRight']  ?? null;
+
     @endphp
 
     <style>
@@ -311,8 +313,12 @@
                 <div><span class="k">Expected Departure</span><span class="v">:
                         {{ \App\Support\ReservationView::fmtDate($expected_departure ?? ($bookingDates['departure'] ?? null), true) }}</span>
                 </div>
-                <div><span class="k">Deposit</span><span class="v">:
-                        {{ \App\Support\ReservationView::fmtMoney($depositVal) }}</span></div>
+                <div>
+                    <span class="k">Deposits</span>
+                    <span class="v">
+                        {{ \App\Support\ReservationView::fmtMoney($deposit_room ?? 0) }}
+                    </span>
+                </div>
             </td>
         </tr>
     </table>

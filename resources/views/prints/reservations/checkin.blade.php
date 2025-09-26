@@ -216,8 +216,8 @@
                 <td class="info-label w-lbl">Guest Name</td><td class="w-colon">:</td>
                 <td class="info-value w-val">{{ $row['guest_display'] ?? '-' }}</td>
                 <td class="w-sp"></td>
-                <td class="info-label w-lblr">Clerk</td><td class="w-colon">:</td>
-                <td class="info-value w-valr">{{ $clerkName ?? '-' }}</td>
+                 <td class="info-label w-lblr">Deposit Card</td><td class="w-colon">:</td>
+                <td class="info-value w-valr">{{ $fmtMoney($deposit_card ?? 0) }}</td>
             </tr>
         </tbody>
     </table>
@@ -238,20 +238,49 @@
                 {{-- HAPUS kolom Amount --}}
             </tr>
         </thead>
+        @php
+            // jumlah tamu dalam satu reservasi (fallback 1)
+            $guestCount = (int) ($resvObj?->reservationGuests?->count() ?? 1);
+        @endphp
         <tbody>
-            <tr>
-                <td class="nowrap">{{ $row['room_no'] ?? '-' }}</td>
-                <td class="nowrap">{{ $row['category'] ?? '-' }}</td>
-                <td class="center nowrap">{{ (int) ($row['ps'] ?? 1) }}</td>
-                <td class="right nowrap">{{ $fmtMoney($finalRatePerNight) }}</td>
-                <td class="center nowrap">{{ $nights }}</td>
-                <td class="center nowrap">{{ $fmtDateShort($row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null))) }}</td>
-                <td class="center nowrap">
-                    @php $outShown = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null)); @endphp
-                    {{ $fmtDateShort($outShown) }}
-                </td>
-            </tr>
+            @if ($guestCount > 1)
+                @foreach ($resvObj->reservationGuests as $g)
+                    @php
+                        $rRoomNo = $g->room?->room_no ?? ('#' . $g->room_id);
+                        $rCat    = $g->room?->type ?? '-';
+                        $rRate   = (float) ($g->room_rate ?? $g->room?->price ?? 0);
+                        $rIn     = $g->actual_checkin ?? $g->expected_checkin;
+                        $rOut    = $g->actual_checkout ?? $g->expected_checkout;
+                        $rNights = ($rIn && $rOut)
+                            ? max(1, \Illuminate\Support\Carbon::parse($rIn)->startOfDay()->diffInDays(
+                                    \Illuminate\Support\Carbon::parse($rOut)->startOfDay()))
+                            : (int) ($g->nights ?? 1);
+                        $rPax    = (int) ($g->jumlah_orang ?? max(1, (int)$g->male + (int)$g->female + (int)$g->children));
+                    @endphp
+                    <tr>
+                        <td class="nowrap">{{ $rRoomNo }}</td>
+                        <td class="nowrap">{{ $rCat }}</td>
+                        <td class="center nowrap">{{ $rPax }}</td>
+                        <td class="right nowrap">{{ $fmtMoney($rRate) }}</td>
+                        <td class="center nowrap">{{ $rNights }}</td>
+                        <td class="center nowrap">{{ $fmtDateShort($rIn) }}</td>
+                        <td class="center nowrap">{{ $fmtDateShort($rOut) }}</td>
+                    </tr>
+                @endforeach
+            @else
+                @php $outShown = $row['actual_out'] ?? ($row['expected_out'] ?? ($row['expected_checkout'] ?? null)); @endphp
+                <tr>
+                    <td class="nowrap">{{ $row['room_no'] ?? '-' }}</td>
+                    <td class="nowrap">{{ $row['category'] ?? '-' }}</td>
+                    <td class="center nowrap">{{ (int) ($row['ps'] ?? 1) }}</td>
+                    <td class="right nowrap">{{ $fmtMoney($finalRatePerNight) }}</td>
+                    <td class="center nowrap">{{ $nights }}</td>
+                    <td class="center nowrap">{{ $fmtDateShort($row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null))) }}</td>
+                    <td class="center nowrap">{{ $fmtDateShort($outShown) }}</td>
+                </tr>
+            @endif
         </tbody>
+
     </table>
 
     {{-- TAMBAH: catatan pajak (dinamis) --}}
@@ -263,49 +292,70 @@
 
     {{-- TAMBAH: VARIASI — Guest & Stay Details, Notes/Requests, Policies --}}
     <div class="section box">
-        <div class="mini-title">Guest & Stay Details</div>
-        <div class="grid-2">
-            <div class="col">
+        @php
+            $guestCount = (int) ($resvObj?->reservationGuests?->count() ?? 1);
+        @endphp
+
+        @if ($guestCount === 1)
+            {{-- ==== Guest & Stay Details (single guest) ==== --}}
+            <div class="mini-title">Guest & Stay Details</div>
+            <div class="grid-2">
+                <div class="col">
+                    <table class="kv">
+                        <tr><td class="k">Guest</td><td class="v">{{ $row['guest_display'] ?? '-' }}</td></tr>
+                        <tr><td class="k">Reservation No</td><td class="v">{{ $invoiceNo ?? ('#' . ($invoiceId ?? '-')) }}</td></tr>
+                        <tr><td class="k">Room</td><td class="v">{{ ($row['room_no'] ?? '-') . ' — ' . ($row['category'] ?? '-') }}</td></tr>
+                        <tr>
+                            <td class="k">In / Out</td>
+                            <td class="v">
+                                {{ $fmtDateFull($row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null))) }}
+                                <span class="subtle">→</span>
+                                {{ $fmtDateFull(($outShown ?? null) ?? null) }}
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="col">
+                    <table class="kv">
+                        <tr><td class="k">Rate / Night</td><td class="v">{{ $fmtMoney($finalRatePerNight) }}</td></tr>
+                        <tr><td class="k">Nights</td><td class="v">{{ $nights }}</td></tr>
+                        <tr>
+                            <td class="k">Breakfast</td>
+                            <td class="v">
+                                @php $bf = ($row['breakfast'] ?? null) ?: ($resvObj?->breakfast ?? null); @endphp
+                                {!! (strtoupper($bf ?? 'NO') === 'YES')
+                                    ? '<span class="pill">Breakfast Included</span>'
+                                    : '<span class="subtle">No</span>' !!}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="k">Extra Bed</td>
+                            <td class="v">{!! ($row['extra_bed_total'] ?? 0) > 0 ? '<span class="pill">Yes</span>' : '<span class="subtle">None</span>' !!}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        @else
+            {{-- ==== Reservation Summary (multi guest) ==== --}}
+            <div class="section box">
+                <div class="mini-title">Reservation Summary</div>
                 <table class="kv">
-                    <tr><td class="k">Guest</td><td class="v">{{ $row['guest_display'] ?? '-' }}</td></tr>
+                    <tr><td class="k">Reserved By</td><td class="v">{{ $companyName ?: ($reserved_by ?? '-') }}</td></tr>
+                    <tr><td class="k">Guests</td><td class="v">{{ $guestCount }}</td></tr>
                     <tr><td class="k">Reservation No</td><td class="v">{{ $invoiceNo ?? ('#' . ($invoiceId ?? '-')) }}</td></tr>
-                    <tr><td class="k">Room</td><td class="v">{{ ($row['room_no'] ?? '-') . ' — ' . ($row['category'] ?? '-') }}</td></tr>
                     <tr>
-                        <td class="k">In / Out</td>
+                        <td class="k">Period</td>
                         <td class="v">
-                            {{ $fmtDateFull($row['actual_in'] ?? ($row['expected_in'] ?? ($row['expected_checkin'] ?? null))) }}
+                            {{ $fmtDateFull($resvObj?->expected_arrival) }}
                             <span class="subtle">→</span>
-                            {{ $fmtDateFull($outShown ?? null) }}
+                            {{ $fmtDateFull($resvObj?->expected_departure) }}
                         </td>
                     </tr>
                 </table>
+
             </div>
-            <div class="col">
-                <table class="kv">
-                    <tr>
-                        <td class="k">Rate / Night</td><td class="v">{{ $fmtMoney($finalRatePerNight) }}</td>
-                    </tr>
-                    <tr>
-                        <td class="k">Nights</td><td class="v">{{ $nights }}</td>
-                    </tr>
-                    <tr>
-                        <td class="k">Breakfast</td>
-                        <td class="v">
-                            @php $bf = ($row['breakfast'] ?? null) ?: ($resvObj?->breakfast ?? null); @endphp
-                            {!! (strtoupper($bf ?? 'NO') === 'YES')
-                                ? '<span class="pill">Breakfast Included</span>'
-                                : '<span class="subtle">No</span>' !!}
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="k">Extra Bed</td>
-                        <td class="v">{!! ($row['extra_bed_total'] ?? 0) > 0
-                            ? '<span class="pill">Yes</span>'
-                            : '<span class="subtle">None</span>' !!}</td>
-                    </tr>
-                </table>
-            </div>
-        </div>
+        @endif
+
     </div>
 
     @php $remarks = $reservation?->remarks ?? null; @endphp
@@ -319,7 +369,7 @@
     <div class="section box">
         <div class="mini-title">Policies & Acknowledgement</div>
         <ul class="list">
-            <li>Check-in time after 14:00; check-out time before 12:00 (noon).</li>
+            <li>Check-in time after 13:00; check-out time before 12:00 (noon).</li>
             <li>Late check-out is subject to availability and may incur charges.</li>
             <li>Room rate is exclusive of taxes and incidentals unless stated otherwise.</li>
             <li>Non-smoking room; a cleaning fee may apply for violations.</li>

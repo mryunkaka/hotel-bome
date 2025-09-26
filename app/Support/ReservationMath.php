@@ -90,14 +90,18 @@ final class ReservationMath
                 : Carbon::parse($expectedCheckin);
             $arrivalAt = $arrivalAt->setTimezone($tz);
 
+            // pakai actual jika ada; kalau tidak ada, anggap "sekarang"
             $refTime = $actualCheckin
                 ? ($actualCheckin instanceof Carbon ? $actualCheckin->copy() : Carbon::parse($actualCheckin))
                 : Carbon::now();
             $refTime = $refTime->setTimezone($tz);
 
-            if ($refTime->greaterThan($arrivalAt)) {
-                $lateMins     = $arrivalAt->diffInMinutes($refTime);
-                $penaltyHours = (int) ceil($lateMins / 60);
+            // ⬇⬇⬇ Perubahan inti:
+            // Dulu: penalty jika refTime > arrivalAt (terlambat)
+            // Sekarang: penalty jika refTime < arrivalAt (datang terlalu awal / early check-in)
+            if ($refTime->lessThan($arrivalAt)) {
+                $earlyMins    = $refTime->diffInMinutes($arrivalAt);   // selisih menuju jam arrival
+                $penaltyHours = (int) ceil($earlyMins / 60);
                 $penaltyRp    = $penaltyHours * max(0, $perHour);
 
                 if ($maxPercent > 0 && $basicRate > 0) {
@@ -108,11 +112,12 @@ final class ReservationMath
                 return ['hours' => $penaltyHours, 'amount' => (int) $penaltyRp];
             }
         } catch (\Throwable $e) {
-            // ignore -> no penalty
+            // abaikan error parsing → tanpa penalty
         }
 
         return ['hours' => 0, 'amount' => 0];
     }
+
 
     /**
      * Hitung total final dari satu "row" generik (dipakai jika mau).
@@ -149,11 +154,11 @@ final class ReservationMath
             $extraBedTotal  = $extraQty * $extraBedPrice;
         }
 
-        $service     = (float) self::toNum(self::getVal($row, 'service', 0));
+        $charge      = (float) self::toNum(self::getVal($row, 'charge', 0));
         $latePenalty = (float) self::toNum(self::getVal($row, 'late_arrival_penalty', 0));
 
         $afterDisc = max(0.0, $base * (1 - $disc / 100));
-        $subtotalBeforeTax = max(0.0, $afterDisc + $service + $extraBedTotal + $latePenalty);
+        $subtotalBeforeTax = max(0.0, $afterDisc + $charge + $extraBedTotal + $latePenalty);
 
         $percentTaxAmount = $taxPercent > 0 ? round($subtotalBeforeTax * $taxPercent / 100) : 0.0;
 
@@ -189,7 +194,7 @@ final class ReservationMath
         // === FIX UTAMA: pakai basicRate() supaya tidak “ketarik guest lain / harga terkini”.
         $rate     = (int) self::basicRate($rg);
         $discPct  = (float) ($rg->discount_percent ?? 0);
-        $service  = (int) ($rg->service ?? 0);
+        $charge   = (int) ($rg->charge ?? 0);
         $extra    = (int) ($rg->extra_bed_total ?? 0);
         $taxPct   = (float) ($rg->tax_percent ?? ($rg->tax?->percent ?? 0));
 
@@ -203,7 +208,7 @@ final class ReservationMath
         $rateAfterDiscPerNight = max(0, $rate - $discPerNight);
         $roomAfterDisc = $rateAfterDiscPerNight * max(1, $nights);
 
-        $subtotal = $roomAfterDisc + $service + $extra + $penalty;
+        $subtotal = $roomAfterDisc + $charge + $extra + $penalty;
         $taxRp    = (int) round(($subtotal * $taxPct) / 100);
         $grand    = $subtotal + $taxRp;
         $deposit  = (int) ($rg->reservation?->deposit ?? 0);
@@ -216,7 +221,7 @@ final class ReservationMath
             'disc_per_night'              => $discPerNight,
             'rate_after_disc_per_night'   => $rateAfterDiscPerNight,
             'room_after_disc'             => $roomAfterDisc,
-            'service'                     => $service,
+            'charge'                      => $charge,
             'extra'                       => $extra,
             'penalty'                     => $penalty,
             'penalty_hours'               => $penalty_hours,

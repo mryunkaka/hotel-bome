@@ -34,10 +34,8 @@
         $rbPhone = $rbObj?->phone ?? ($rbObj?->handphone ?? '-');
         $rbEmail = $rbObj?->email ?? '-';
 
-        $guestsQ = $resv
-            ? $resv->reservationGuests()->with(['guest:id,name', 'room:id,room_no,type,price', 'reservation.tax'])->orderBy('id')
-            : null;
-        $guests  = $guestsQ ? $guestsQ->get() : collect();
+        // Gunakan koleksi yg sudah dikirim route (berisi 1 RG yang dipilih)
+        $guests = collect($guests ?? []);
         $totalGuestsRegistered = $guests->count();
 
         // ===== Akumulasi footer
@@ -45,9 +43,24 @@
         $sumTax   = 0; // pajak
         $sumGrand = 0; // subtotal + pajak
 
-        $taxPctReservation  = (float) ($resv?->tax?->percent ?? 0);
-        $depositReservation = (int) ($resv?->deposit ?? 0);
+        $taxPctReservation     = (float) ($resv?->tax?->percent ?? 0);
+        $depositCardReservation = (int) ($resv?->deposit_card ?? $resv?->deposit ?? 0);
         $tz = 'Asia/Makassar';
+
+        $mode = strtolower((string) ($mode ?? request('mode', 'single')));
+        $mode = in_array($mode, ['all', 'single'], true) ? $mode : 'single';
+
+        // Koleksi guests sudah dikirim dari route
+        $guests = collect($guests ?? []);
+        $totalGuestsRegistered = max(1, $guests->count());
+
+        // Pajak efektif:
+        // - mode=all    → pakai pajak reservation apa adanya
+        // - mode=single → pajak dibagi rata antar jumlah tamu (contoh 10% & 2 tamu → 5%)
+        $taxPctEffective = $mode === 'single'
+            ? ((float) $taxPctReservation) / $totalGuestsRegistered
+            : (float) $taxPctReservation;
+
     @endphp
     <title>{{ $title ?? 'GUEST BILL' }} — {{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</title>
     <style>
@@ -130,9 +143,9 @@
             <td class="sep">:</td>
             <td class="val">{{ $rbName }}</td>
             <td class="gap"></td>
-            <td class="lbl">Deposit</td>
+            <td class="lbl">Deposit Card</td>
             <td class="sep">:</td>
-            <td class="val">{{ $m($depositReservation) }}</td>
+            <td class="val">{{ $m($depositCardReservation) }}</td>
         </tr>
 
         <tr>
@@ -170,7 +183,7 @@
                 <th class="col-dt2">C-O</th>
                 <th class="col-status">Status</th>
                 <th class="col-amts">R × N</th>
-                <th class="col-amts">Service</th>
+                <th class="col-amts">Charge</th>
                 <th class="col-amts">Extra</th>
                 <th class="col-amts">Penalty</th>
                 <th class="col-amts">Amount</th>
@@ -198,8 +211,8 @@
                 $gDiscAmt   = (int) round(($gRate * $gDiscPct) / 100);
                 $gRateAfter = max(0, $gRate - $gDiscAmt);
 
-                // Service & Extra
-                $gServiceRp = (int) ($g->service ?? 0);
+                // Charge & Extra
+                $gChargeRp = (int) ($g->charge ?? 0);
                 $gExtraRp   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
 
                 // Penalty
@@ -212,8 +225,8 @@
                 $gPenaltyRp = (int) ($gPen['amount'] ?? 0);
 
                 // Tax base & tax
-                $gTaxBase = (int) ($gRateAfter * $n + $gServiceRp + $gExtraRp + $gPenaltyRp);
-                $gTaxRp   = (int) round(($gTaxBase * $taxPctReservation) / 100);
+                $gTaxBase = (int) ($gRateAfter * $n + $gChargeRp + $gExtraRp + $gPenaltyRp);
+                $gTaxRp   = (int) round(($gTaxBase * $taxPctEffective) / 100);
 
                 // Akumulasi footer
                 $sumBase  += $gTaxBase;
@@ -237,7 +250,7 @@
                 <td class="center">{{ $ds($out) }}</td>
                 <td class="center">{{ $g->actual_checkout ? 'CO' : 'IH' }}</td>
                 <td class="center">{{ $m($gRateAfter * $n) }}</td>
-                <td class="center">{{ $m($gServiceRp) }}</td>
+                <td class="center">{{ $m($gChargeRp) }}</td>
                 <td class="center">{{ $m($gExtraRp) }}</td>
                 <td class="center">{{ $m($gPenaltyRp) }}</td>
                 <td class="center"><strong>{{ $m($gTaxBase) }}</strong></td>
@@ -257,7 +270,7 @@
         }
 
         // Total yang harus dibayar setelah dikurangi deposit
-        $dueAfterDeposit = max(0, $sumGrand - $depositReservation);
+        $dueAfterDeposit = max(0, $sumGrand - $depositCardReservation);
 
         // Hitung kembalian atau sisa tagihan
         $change    = max(0, $amountPaid - $dueAfterDeposit);
@@ -279,31 +292,41 @@
             <td class="v"><strong>{{ $m($sumGrand) }}</strong></td>
         </tr>
 
-        {{-- Amount Paid (total pembayaran yang tercatat) --}}
-        <tr>
-            <td class="k" style="text-align:right">Amount Paid</td>
-            <td class="v">{{ $m($amountPaid) }}</td>
-        </tr>
+        @if ($mode === 'all')
+            {{-- Amount Paid (total pembayaran yang tercatat) --}}
+            @php
+                $amountPaid = 0;
+                if ($resv?->id) {
+                    $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)->sum('amount');
+                }
+                $dueAfterDeposit = max(0, $sumGrand - $depositCardReservation);
+                $change    = max(0, $amountPaid - $dueAfterDeposit);
+                $remaining = max(0, $dueAfterDeposit - $amountPaid);
+            @endphp
 
-        {{-- (-) Deposit --}}
-        @if ($depositReservation > 0)
             <tr>
-                <td class="k" style="text-align:right">(-) Deposit</td>
-                <td class="v">{{ $m($depositReservation) }}</td>
+                <td class="k" style="text-align:right">Amount Paid</td>
+                <td class="v">{{ $m($amountPaid) }}</td>
             </tr>
-        @endif
 
-        {{-- Baris akhir: Change (jika lebih) atau Balance Due (jika kurang) --}}
-        @if ($change > 0)
-            <tr>
-                <td class="k" style="text-align:right"><strong>CHANGE</strong></td>
-                <td class="v"><strong>{{ $m($change) }}</strong></td>
-            </tr>
-        @else
-            <tr>
-                <td class="k" style="text-align:right"><strong>BALANCE DUE</strong></td>
-                <td class="v"><strong>{{ $m($remaining) }}</strong></td>
-            </tr>
+            @if ($depositCardReservation > 0)
+                <tr>
+                    <td class="k" style="text-align:right">(-) Deposit Card</td>
+                    <td class="v">{{ $m($depositCardReservation) }}</td>
+                </tr>
+            @endif
+
+            @if ($change > 0)
+                <tr>
+                    <td class="k" style="text-align:right"><strong>CHANGE</strong></td>
+                    <td class="v"><strong>{{ $m($change) }}</strong></td>
+                </tr>
+            @else
+                <tr>
+                    <td class="k" style="text-align:right"><strong>BALANCE DUE</strong></td>
+                    <td class="v"><strong>{{ $m($remaining) }}</strong></td>
+                </tr>
+            @endif
         @endif
     </table>
 

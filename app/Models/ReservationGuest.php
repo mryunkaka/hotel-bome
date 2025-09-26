@@ -38,6 +38,7 @@ class ReservationGuest extends Model
         'note',
         'extra_bed',
         'discount_percent',
+        'charge',
     ];
 
     protected $casts = [
@@ -52,6 +53,7 @@ class ReservationGuest extends Model
         'female'            => 'integer',
         'children'          => 'integer',
         'extra_bed'         => 'integer',
+        'charge'            => 'integer',
     ];
 
     /**

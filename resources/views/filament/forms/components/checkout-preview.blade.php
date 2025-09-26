@@ -26,7 +26,7 @@
     $afterDiscPerNight = max(0, $basicRate - $discAmount);
     $afterDiscTimesNights = $afterDiscPerNight * $nights;
 
-    $serviceRp = (int) ($rg?->service ?? 0);
+    $chargeRp  = (int) ($rg?->charge ?? 0);
     $extraQty  = (int) ($rg?->extra_bed ?? 0);
     $extraPrice = 100_000;
     $extraSub  = $extraQty * $extraPrice;
@@ -39,7 +39,7 @@
 
     // Pajak & total (GLOBAL utk panel kanan)
     $taxPct  = (float) ($res?->tax?->percent ?? 0);
-    $taxBase = $afterDiscTimesNights + $serviceRp + $extraSub + $penaltyRp; // subtotal tanpa pajak
+    $taxBase = $afterDiscTimesNights + $chargeRp + $extraSub + $penaltyRp; // subtotal tanpa pajak
     $taxRp   = (int) round(($taxBase * $taxPct) / 100);
     $grand   = (int) ($taxBase + $taxRp);
 
@@ -198,7 +198,7 @@
                         <div class="hb-body" style="padding:0">
                             <table class="table">
                                 <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
-                                <tr><td class="k">Service (Rp)</td><td class="v">{{ $money($serviceRp) }}</td></tr>
+                                <tr><td class="k">Charge (Rp)</td><td class="v">{{ $money($chargeRp) }}</td></tr>
                                 <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
                                 @if ($penaltyRp > 0)
                                     <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
@@ -220,23 +220,7 @@
                 <div class="card">
                     <div class="title" style="display:flex;align-items:center;justify-content:space-between">
                         <span>Guest Information</span>
-
-                        @if ($allCheckedOut)
-                            <a href="{{ route('reservation-guests.bill', $rg) }}"
-                               target="_blank" rel="noopener"
-                               class="pill"
-                               style="text-decoration:none;padding:4px 10px;border-color:#c7d2fe;background:#eef2ff;color:#3730a3">
-                                Print Guest Bill
-                            </a>
-                        @else
-                            <span class="pill"
-                                  title="Only available after all guests have checked out"
-                                  style="padding:4px 10px;background:#f3f4f6;border-color:#e5e7eb;color:#9ca3af;cursor:not-allowed">
-                                Print Guest Bill
-                            </span>
-                        @endif
                     </div>
-
                     @php
                         // Accumulators untuk footer
                         $sumBase  = 0; // total sebelum pajak
@@ -257,7 +241,7 @@
                                     <th>Check-out</th>
                                     <th>Status</th>
                                     <th>Amount Due</th>
-                                    <th>Aksi</th>
+                                    <th>Action</th>
                                 </tr>
                                 </thead>
                                 <tbody>
@@ -283,7 +267,7 @@
                                         $gRateAfter = max(0, $gRate - $gDiscAmt);
 
                                         // Service & Extra
-                                        $gServiceRp = (int) ($g->service ?? 0);
+                                        $gChargeRp  = (int) ($g->charge ?? 0);
                                         $gExtraRp   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
 
                                         // Penalty (guest-first expected)
@@ -297,7 +281,7 @@
 
                                         // Tax per-guest (buat hitung footer; tidak ditampilkan sebagai kolom)
                                         $gTaxPct  = (float) ($g->reservation?->tax?->percent ?? 0);
-                                        $gTaxBase = $gRateAfter * $n + $gServiceRp + $gExtraRp + $gPenaltyRp;
+                                        $gTaxBase = $gRateAfter * $n + $gChargeRp + $gExtraRp + $gPenaltyRp;
                                         $gTaxRp   = (int) round(($gTaxBase * $gTaxPct) / 100);
                                         $gGrand   = (int) ($gTaxBase + $gTaxRp);
 

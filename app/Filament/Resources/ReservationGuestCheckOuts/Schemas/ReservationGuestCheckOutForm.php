@@ -51,7 +51,7 @@ final class ReservationGuestCheckOutForm
                                 ->icon('heroicon-o-clipboard-document-list')
                                 ->disabled(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout))
                                 ->tooltip(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout)
-                                    ? 'Only available after guest has checked out.' : null)
+                                    ? 'Hanya tersedia setelah semua tamu telah check out.' : null)
                                 ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.folio', $record))
                                 ->openUrlInNewTab()
                                 ->color('info')        // UI: warna biru-informasi
@@ -73,7 +73,7 @@ final class ReservationGuestCheckOutForm
                                 })
                                 ->tooltip(function (\App\Models\ReservationGuest $record) {
                                     if (filled($record->actual_checkout)) {
-                                        return 'Guest already checked out.';
+                                        return 'Tamu sudah check out.';
                                     }
                                     if (\App\Models\Payment::where('reservation_guest_id', $record->id)->exists()) {
                                         return 'Payment already recorded — posting/correction is locked.';
@@ -81,8 +81,8 @@ final class ReservationGuestCheckOutForm
                                     return null;
                                 })
                                 ->schema([
-                                    \Filament\Forms\Components\TextInput::make('adjustment_rp')
-                                        ->label('Adjustment (±Rp) → ditempel ke kolom Service')
+                                    TextInput::make('adjustment_rp')
+                                        ->label('Adjustment (±Rp) → ditempel ke kolom Charge')
                                         ->numeric()
                                         ->mask(\Filament\Support\RawJs::make('$money($input)'))
                                         ->stripCharacters(',')
@@ -104,11 +104,11 @@ final class ReservationGuestCheckOutForm
                                             ->send();
                                         return;
                                     }
-                                    $record->service = (int) ($record->service ?? 0) + (int) $data['adjustment_rp'];
+                                    $record->charge = (int) ($record->charge ?? 0) + (int) $data['adjustment_rp'];
                                     $record->save();
 
                                     \Filament\Notifications\Notification::make()
-                                        ->title('Service adjusted.')
+                                        ->title('Charge adjusted.')
                                         ->success()
                                         ->send();
                                 })
@@ -125,10 +125,10 @@ final class ReservationGuestCheckOutForm
                                 ->icon('heroicon-o-printer')
                                 ->disabled(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout))
                                 ->tooltip(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout)
-                                    ? 'Only available after guest has checked out.' : null)
-                                ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.bill', $record))
+                                    ? 'Hanya tersedia setelah semua tamu telah check out.' : null)
+                                ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.bill', $record) . '?mode=all')
                                 ->openUrlInNewTab()
-                                ->color('primary')  // UI: biru-utama (beda dari info)
+                                ->color('primary')
                                 ->button(),
                         ])->columns(1)->columnSpan(3)
                             ->alignment('center'),
@@ -138,7 +138,7 @@ final class ReservationGuestCheckOutForm
                             Action::make('split_bill')
                                 ->label('Split Bill')
                                 ->icon('heroicon-o-scissors')
-                                ->color('warning') // UI: kuning
+                                ->color('warning')
                                 ->button()
                                 ->disabled(
                                     fn(\App\Models\ReservationGuest $record): bool =>
@@ -150,37 +150,8 @@ final class ReservationGuestCheckOutForm
                                     }
                                     return null;
                                 })
-                                // (form & action asli tetap — tidak diubah)
-                                ->schema(function (\App\Models\ReservationGuest $record) {
-                                    return [
-                                        \Filament\Forms\Components\TextInput::make('reservation_no')
-                                            ->label('New Reservation No (optional)')
-                                            ->maxLength(64)
-                                            ->placeholder('Auto-generate from model if empty'),
-                                        \Filament\Forms\Components\Radio::make('move_tax')
-                                            ->label('Move Tax setting (id_tax) to new reservation?')
-                                            ->options(['YES' => 'Yes', 'NO' => 'No'])
-                                            ->default('YES')->inline()->required(),
-                                        \Filament\Forms\Components\Radio::make('move_deposit')
-                                            ->label('Move reservation deposit?')
-                                            ->options(['NONE' => 'No', 'ALL' => 'All', 'PARTIAL' => 'Partial'])
-                                            ->default('NONE')->inline()->required(),
-                                        \Filament\Forms\Components\TextInput::make('deposit_amount')
-                                            ->label('Deposit to move (IDR)')
-                                            ->numeric()->minValue(0)
-                                            ->mask(\Filament\Support\RawJs::make('$money($input)'))
-                                            ->stripCharacters(',')
-                                            ->visible(fn(\Filament\Schemas\Components\Utilities\Get $get) => $get('move_deposit') === 'PARTIAL'),
-                                        \Filament\Forms\Components\Radio::make('copy_remarks')
-                                            ->label('Copy remarks to new reservation?')
-                                            ->options(['YES' => 'Yes', 'NO' => 'No'])
-                                            ->default('YES')->inline()->required(),
-                                    ];
-                                })
-                                ->action(function (array $data, \App\Models\ReservationGuest $record) {
-                                    // (isi action split bill Anda yang ada — tidak diubah)
-                                    // ...
-                                }),
+                                ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.bill', $record) . '?mode=single')
+                                ->openUrlInNewTab(),
                         ])->columns(1)->columnSpan(3)
                             ->alignment('center'),
 
@@ -295,10 +266,32 @@ final class ReservationGuestCheckOutForm
                                     });
 
                                     $printUrl = route('reservation-guests.bill', $record);
-                                    if (method_exists($livewire, 'dispatch')) {
-                                        $livewire->dispatch('close-modal');
-                                    }
-                                    $livewire->js("window.open('{$printUrl}', '_blank', 'noopener,noreferrer');");
+                                    $jsUrl    = json_encode($printUrl); // <-- aman untuk JS (escape quote/karakter khusus)
+
+                                    $livewire->js(<<<JS
+                                        (() => {
+                                        const url = {$jsUrl};
+
+                                        // 1) Cara aman untuk popup blocker: <a target="_blank"> + click
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.target = '_blank';
+                                        a.rel = 'noopener,noreferrer';
+                                        a.style.display = 'none';
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+
+                                        // 2) Cadangan: coba window.open() (tanpa fallback redirect)
+                                        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {}
+
+                                        // 3) Tutup modal (kalau ada) lalu refresh halaman edit
+                                        setTimeout(() => {
+                                            window.Livewire?.dispatch?.('close-modal');
+                                            window.location.reload();
+                                        }, 300);
+                                        })();
+                                        JS);
                                     return;
                                 }),
                         ])->columns(1)->columnSpan(3)
@@ -328,7 +321,7 @@ final class ReservationGuestCheckOutForm
             'rg'                => $rg,
             'nights'            => $calc['nights'],
             'rate_after_disc'   => (int) $calc['room_after_disc'],
-            'service'           => (int) $calc['service'],
+            'service'           => (int) $calc['charge'],
             'extra_bed'         => (int) $calc['extra'],
             'late_penalty'      => (int) $calc['penalty'],
             'tax_percent'       => (float) $calc['tax_percent'],

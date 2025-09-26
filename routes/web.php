@@ -56,6 +56,13 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'tax:id,percent',
     ])->firstOrFail();
 
+    // Pastikan RG terpilih punya relasi yang dipakai di blade
+    $guest->load([
+        'guest:id,name',
+        'room:id,room_no,type,price',
+        'reservation.tax',
+    ]);
+
     // Hotel aktif (untuk logo & header)
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = Hotel::find($hid);
@@ -87,23 +94,46 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
     $discPct   = (float) ($calc['disc_percent'] ?? 0);
     $afterDisc = (int)  ($calc['rate_after_disc_per_night'] ?? 0);
     $roomDisc  = (int)  ($calc['room_after_disc'] ?? 0);
-    $serviceRp = (int)  ($calc['service'] ?? 0);
+
+    // ⚠️ gunakan charge, bukan service
+    $chargeRp  = (int)  ($calc['charge'] ?? 0);
+
     $extraRp   = (int)  ($calc['extra'] ?? 0);
     $penaltyRp = (int)  ($calc['penalty'] ?? 0);
 
     $taxPct    = (float) ($reservation->tax?->percent ?? ($calc['tax_percent'] ?? 0));
     $taxRp     = (int)  ($calc['tax_rp'] ?? 0);
 
-    $subtotalBeforeTax = $roomDisc + $serviceRp + $extraRp + $penaltyRp;
+    $subtotalBeforeTax = $roomDisc + $chargeRp + $extraRp + $penaltyRp;
     $grand             = (int) ($calc['grand'] ?? ($subtotalBeforeTax + $taxRp));
 
-    $deposit = (int) ($reservation->deposit ?? 0);
-    $balance = max(0, $grand - $deposit);
+    // Pakai deposit card jika ada
+    $depositCard = (int) ($reservation->deposit_card ?? $reservation->deposit ?? 0);
+    $balance     = max(0, $grand - $depositCard);
 
     // Data untuk view
     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
         ? strtolower(request('o', 'portrait'))
         : 'portrait';
+
+    // Tentukan mode (all / single)
+    $mode = strtolower((string) request('mode', 'single'));
+    if (! in_array($mode, ['all', 'single'], true)) {
+        $mode = 'single';
+    }
+
+    // guests yang dikirim ke blade:
+    // - mode=all   → semua RG dalam reservation
+    // - mode=single→ hanya RG terpilih
+    if ($mode === 'all') {
+        $allGuests = $reservation->reservationGuests()
+            ->with(['guest:id,name', 'room:id,room_no,type,price', 'reservation.tax'])
+            ->orderBy('id')
+            ->get();
+        $guestsForView = $allGuests;
+    } else {
+        $guestsForView = collect([$guest]);
+    }
 
     $view = [
         'paper'       => 'A4',
@@ -117,7 +147,7 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'clerkName'   => $reservation->creator?->name,
         'reservation' => $reservation,
 
-        // Header info tamu/kamar
+        // Header info tamu/kamar (RG terpilih)
         'row' => [
             'guest_display' => $guest->guest?->display_name ?? $guest->guest?->name,
             'room_no'       => $guest->room?->room_no,
@@ -127,23 +157,29 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
             'actual_out'    => $guest->actual_checkout ?: $guest->expected_checkout,
         ],
 
-        // Breakdown angka
+        // Breakdown angka (RG terpilih)
         'bill' => [
             'rate'                  => $rate,
             'nights'                => $nights,
             'discount_percent'      => $discPct,
             'after_disc_per_night'  => $afterDisc,
             'room_after_disc'       => $roomDisc,
-            'service'               => $serviceRp,
+            'charge'                => $chargeRp,  // <- charge
             'extra'                 => $extraRp,
             'penalty'               => $penaltyRp,
             'subtotal_before_tax'   => $subtotalBeforeTax,
             'tax_percent'           => $taxPct,
             'tax_rp'                => $taxRp,
             'grand'                 => $grand,
-            'deposit'               => $deposit,
+            'deposit_card'          => $depositCard,
             'balance'               => $balance,
         ],
+
+        // guests (bisa 1 atau semua, tergantung mode)
+        'guests' => $guestsForView,
+
+        // kirim mode ke blade agar footer & pembagian tax bisa disesuaikan
+        'mode' => $mode,
     ];
 
     // Preview HTML ?html=1, selain itu render PDF inline
@@ -162,6 +198,7 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'Content-Disposition' => 'inline; filename="' . $filename . '"',
     ]);
 })->name('reservation-guests.bill');
+
 
 // === PDF BILL (inline PDF)
 Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGuest $guest) {

@@ -3,39 +3,24 @@
 namespace App\Filament\Resources\Reservations\Schemas;
 
 use App\Models\Room;
-use App\Models\Guest;
 use App\Models\Reservation;
 use Filament\Support\RawJs;
 use Illuminate\Support\Arr;
 use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
-use Illuminate\Validation\Rule;
-use App\Models\ReservationGuest;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Filament\Forms\Components\Radio;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Grid;
-use Filament\Schemas\Components\Group;
 use Filament\Forms\Components\Repeater;
-use Filament\Forms\Components\Textarea;
 use Illuminate\Support\Facades\Session;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\ViewField;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
-use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\FileUpload;
-use Illuminate\Database\Eloquent\Builder;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\Utilities\Set;
-use Filament\Forms\Components\Select as FSelect;
-use App\Filament\Resources\ReservationGuests\ReservationGuestResource;
 
 class ReservationForm
 {
@@ -179,14 +164,12 @@ class ReservationForm
                             ->label('Reserved By Type')
                             ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
                             ->default('GUEST')
-                            ->live()
                             ->columnSpan(12),
 
                         // GUEST Section
                         Select::make('guest_id')
                             ->required(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
                             ->visible(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
-                            ->live()
                             ->label('Guest')
                             ->native(false)
                             ->searchable()
@@ -327,7 +310,6 @@ class ReservationForm
                         Select::make('group_id')
                             ->required(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
                             ->visible(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
-                            ->live()
                             ->label('Group')
                             ->native(false)
                             ->searchable()
@@ -545,7 +527,6 @@ class ReservationForm
                                     ->native(false)
                                     ->searchable()
                                     ->required()
-                                    ->live()
                                     ->options(function (Get $get) {
                                         $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
 
@@ -676,15 +657,8 @@ class ReservationForm
                                     ->default(0)
                                     ->columnSpan(2),
 
-                                // Service & Extra Bed
-                                TextInput::make('service')
-                                    ->label('Service')
-                                    ->numeric()
-                                    ->default(0)
-                                    ->columnSpan(3),
-
                                 TextInput::make('extra_bed')
-                                    ->label('E. Bed')
+                                    ->label('Ektra Bed')
                                     ->numeric()
                                     ->default(0)
                                     ->columnSpan(2),
@@ -705,7 +679,7 @@ class ReservationForm
                                         'COMPLIMENTARY' => 'Complimentary',
                                     ])
                                     ->default('PERSONAL ACCOUNT')
-                                    ->columnSpan(3),
+                                    ->columnSpan(2),
 
                                 // Pax - TAMBAHKAN live() untuk auto-calculate jumlah_orang
                                 // Pax (TIDAK live)
@@ -748,7 +722,7 @@ class ReservationForm
                                 TextInput::make('note')
                                     ->label('Note')
                                     ->maxLength(150)
-                                    ->columnSpan(4),
+                                    ->columnSpan(8),
                             ])->columnSpanFull(),
                         ])
 

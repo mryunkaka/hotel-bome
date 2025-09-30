@@ -61,6 +61,21 @@
             ? ((float) $taxPctReservation) / $totalGuestsRegistered
             : (float) $taxPctReservation;
 
+        // ===== Minibar totals per guest (pakai total_amount dari MinibarReceipt)
+        $minibarTotals = [];
+        if (!empty($resv) && isset($guests)) {
+            $guestIds = collect($guests)->pluck('id')->filter()->values()->all();
+            if (!empty($guestIds)) {
+                $minibarTotals = \App\Models\MinibarReceipt::query()
+                    ->whereIn('reservation_guest_id', $guestIds)
+                    ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
+                    ->groupBy('reservation_guest_id')
+                    ->pluck('sum_total', 'reservation_guest_id')
+                    ->toArray();
+            }
+        }
+
+
     @endphp
     <title>{{ $title ?? 'GUEST BILL' }} — {{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</title>
     <style>
@@ -184,6 +199,7 @@
                 <th class="col-status">Status</th>
                 <th class="col-amts">R × N</th>
                 <th class="col-amts">Charge</th>
+                <th class="col-amts">Service</th>
                 <th class="col-amts">Extra</th>
                 <th class="col-amts">Penalty</th>
                 <th class="col-amts">Amount</th>
@@ -211,9 +227,10 @@
                 $gDiscAmt   = (int) round(($gRate * $gDiscPct) / 100);
                 $gRateAfter = max(0, $gRate - $gDiscAmt);
 
-                // Charge & Extra
+                // Charge & Extra & service
                 $gChargeRp = (int) ($g->charge ?? 0);
                 $gExtraRp   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
+                $gMinibar = (int) ($minibarTotals[$g->id] ?? 0);
 
                 // Penalty
                 $gPen = ReservationMath::latePenalty(
@@ -225,7 +242,7 @@
                 $gPenaltyRp = (int) ($gPen['amount'] ?? 0);
 
                 // Tax base & tax
-                $gTaxBase = (int) ($gRateAfter * $n + $gChargeRp + $gExtraRp + $gPenaltyRp);
+                $gTaxBase = (int) ($gRateAfter * $n + $gChargeRp + $gExtraRp + $gPenaltyRp + $gMinibar);
                 $gTaxRp   = (int) round(($gTaxBase * $taxPctEffective) / 100);
 
                 // Akumulasi footer
@@ -251,6 +268,7 @@
                 <td class="center">{{ $g->actual_checkout ? 'CO' : 'IH' }}</td>
                 <td class="center">{{ $m($gRateAfter * $n) }}</td>
                 <td class="center">{{ $m($gChargeRp) }}</td>
+                <td class="center">{{ $m($gMinibar) }}</td>
                 <td class="center">{{ $m($gExtraRp) }}</td>
                 <td class="center">{{ $m($gPenaltyRp) }}</td>
                 <td class="center"><strong>{{ $m($gTaxBase) }}</strong></td>
@@ -262,20 +280,30 @@
     @php $sumGrand = $sumBase + $sumTax; @endphp
 
     @php
-        // Total deposit dari reservation (sudah ada: $depositReservation)
-        // Total pembayaran yang sudah tercatat di tabel payments untuk reservation ini:
+        // Total pembayaran (EXCLUDE pembayaran yang ditandai sebagai DEPOSIT agar tidak dobel potong)
         $amountPaid = 0;
         if ($resv?->id) {
-            $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)->sum('amount');
+            $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)
+                ->where(function ($q) {
+                    $q->whereNull('method')
+                    ->orWhereNotIn('method', [
+                        'DEPOSIT', 'DEPOSIT_CARD', 'DEPOSIT CASH', 'DEPOSITCARD', 'DEPOSIT-CARD',
+                    ]);
+                })
+                ->sum('amount');
         }
 
-        // Total yang harus dibayar setelah dikurangi deposit
-        $dueAfterDeposit = max(0, $sumGrand - $depositCardReservation);
+        // Deposit kartu yang berlaku (dipotong SEKALI dari total tagihan)
+        $effectiveDeposit = (int) $depositCardReservation;
 
-        // Hitung kembalian atau sisa tagihan
-        $change    = max(0, $amountPaid - $dueAfterDeposit);
-        $remaining = max(0, $dueAfterDeposit - $amountPaid);
+        // Tagihan setelah deposit (tidak boleh minus)
+        $dueAfterDeposit = max(0, (int) $sumGrand - $effectiveDeposit);
+
+        // Kembalian / Sisa
+        $change    = max(0, (int) $amountPaid - $dueAfterDeposit);
+        $remaining = max(0, $dueAfterDeposit - (int) $amountPaid);
     @endphp
+
 
     {{-- ===== FOOTER TOTALS ===== --}}
     <table class="total">
@@ -297,11 +325,20 @@
             @php
                 $amountPaid = 0;
                 if ($resv?->id) {
-                    $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)->sum('amount');
+                    $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)
+                        ->where(function ($q) {
+                            $q->whereNull('method')
+                            ->orWhereNotIn('method', [
+                                'DEPOSIT', 'DEPOSIT_CARD', 'DEPOSIT CASH', 'DEPOSITCARD', 'DEPOSIT-CARD',
+                            ]);
+                        })
+                        ->sum('amount');
                 }
-                $dueAfterDeposit = max(0, $sumGrand - $depositCardReservation);
-                $change    = max(0, $amountPaid - $dueAfterDeposit);
-                $remaining = max(0, $dueAfterDeposit - $amountPaid);
+
+                $effectiveDeposit = (int) $depositCardReservation;
+                $dueAfterDeposit  = max(0, (int) $sumGrand - $effectiveDeposit);
+                $change           = max(0, (int) $amountPaid - $dueAfterDeposit);
+                $remaining        = max(0, $dueAfterDeposit - (int) $amountPaid);
             @endphp
 
             <tr>

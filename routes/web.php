@@ -289,11 +289,11 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
             'guest:id,name,salutation,address,city,phone,email',
             'group:id,name,address,city,phone,handphone,fax,email',
             'creator:id,name',
-            'tax:id,percent', // ✅ pajak lewat Reservation, bukan RG
+            'tax:id,percent', // pajak lewat Reservation
         ])
         ->firstOrFail();
 
-    // ❌ HAPUS 'tax' dari sini (RG tidak punya relasi tax)
+    // RG tidak punya relasi tax
     $guest->loadMissing([
         'guest:id,name,salutation,address,city,phone,email',
         'room:id,room_no,type,price',
@@ -302,7 +302,7 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = \App\Models\Hotel::find($hid);
 
-    // Logo -> base64 untuk file lokal, atau URL langsung (aktifkan remote)
+    // Logo → base64 (local) / URL (remote)
     $allowRemote = false;
     $logoData = null;
     if (function_exists('buildPdfLogoData')) {
@@ -322,10 +322,10 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
         }
     }
 
-    // Perhitungan & data baris untuk view (pertahankan variabel)
+    // Perhitungan & data baris untuk view
     $calc = \App\Support\ReservationMath::guestBill($guest, ['tz' => 'Asia/Makassar']);
-    $n    = (int) $calc['nights'];
-    $rate = (int) $calc['rate'];
+    $n    = (int) ($calc['nights'] ?? 1);
+    $rate = (int) ($calc['rate'] ?? 0);
 
     // gunakan FQCN agar tidak perlu use
     $nExpected = \App\Support\ReservationMath::nights($guest->expected_checkin, $guest->expected_checkout, 1);
@@ -346,6 +346,8 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
         'reservation' => $reservation,
         'clerkName'   => $reservation->creator?->name,
         'row' => [
+            'id'               => $guest->id,                 // ← tambahan (dipakai Folio/Minibar)
+            'reservation_guest_id' => $guest->id,             // ← tambahan (opsional)
             'room_no'          => $guest->room?->room_no,
             'category'         => $guest->room?->type,
             'rate'             => $rate,
@@ -356,10 +358,10 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
             'actual_in'        => $guest->actual_checkin,
             'actual_out'       => $guest->actual_checkout,
             'expected_out'     => $guest->expected_checkout,
-            'discount_percent' => (float) $calc['disc_percent'],
-            'tax_percent'      => (float) $calc['tax_percent'],
-            'service'          => (int)   $calc['service'],
-            'extra_bed_total'  => (int)   $calc['extra'],
+            'discount_percent' => (float) ($calc['disc_percent'] ?? 0),
+            'tax_percent'      => (float) ($calc['tax_percent'] ?? 0),
+            'service'          => (int)   ($calc['service'] ?? 0),
+            'extra_bed_total'  => (int)   ($calc['extra'] ?? 0),
         ],
         'calc' => $calc,
     ];
@@ -370,7 +372,7 @@ Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest
 
     $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('prints.reservations.folio', $view)
         ->setPaper('a4', $view['orientation'])
-        ->setOptions(['isRemoteEnabled' => $allowRemote]); // ✅ gunakan setOptions
+        ->setOptions(['isRemoteEnabled' => $allowRemote]);
 
     $filename = 'folio-' . ($reservation->reservation_no ?? $reservation->id) . '-' . $guest->id . '.pdf';
 

@@ -114,6 +114,23 @@
 
         }
 
+        // ===== MINIBAR (per ReservationGuest) =====
+        $rgId = (int) ($row['id'] ?? ($row['reservation_guest_id'] ?? 0));
+        if ($rgId > 0) {
+            $minibarSum = (int) \App\Models\MinibarReceipt::query()
+                ->where('reservation_guest_id', $rgId)
+                ->sum('total_amount');
+
+            if ($minibarSum > 0) {
+                $entries[] = [
+                    'date'   => $actualOut ? \Illuminate\Support\Carbon::parse($actualOut)->toDateString() : now()->toDateString(),
+                    'desc'   => 'MINIBAR',
+                    'debit'  => $minibarSum,
+                    'credit' => 0,
+                ];
+            }
+        }
+
         usort($entries, fn($a, $b) => strcmp($a['date'], $b['date']));
         $run = 0.0;
         $rows = [];

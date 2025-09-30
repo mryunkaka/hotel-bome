@@ -212,7 +212,7 @@
                             <table class="table">
                                 <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
                                 <tr><td class="k">Charge</td><td class="v">{{ $money($chargeRp) }}</td></tr>
-                                <tr><td class="k">Minibar Subtotal</td><td class="v">{{ $money($minibarSub) }}</td></tr>
+                                <tr><td class="k">Service</td><td class="v">{{ $money($minibarSub) }}</td></tr>
                                 <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
                                 @if ($penaltyRp > 0)
                                     <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>

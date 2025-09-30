@@ -64,7 +64,7 @@ class MinibarReceiptsTable
 
                 TextColumn::make('total_amount')
                     ->label('Total (Rp)')
-                    ->formatStateUsing(fn($v) => number_format((float) $v, 0, ',', '.'))
+                    ->money('IDR')
                     ->alignRight()
                     ->sortable(),
 
@@ -82,7 +82,7 @@ class MinibarReceiptsTable
                 // range tanggal issued_at
                 Filter::make('issued_at_range')
                     ->label('Issued Date')
-                    ->form([
+                    ->schema([
                         \Filament\Forms\Components\DatePicker::make('from')->label('From'),
                         \Filament\Forms\Components\DatePicker::make('until')->label('Until'),
                     ])
@@ -150,7 +150,6 @@ class MinibarReceiptsTable
                     ->openUrlInNewTab()
                     ->tooltip('Print receipt bill'),
             ])
-
             ->bulkActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),

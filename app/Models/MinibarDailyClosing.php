@@ -14,26 +14,32 @@ class MinibarDailyClosing extends Model
     protected $fillable = [
         'hotel_id',
         'closing_date',
-        'is_balanced',
+        'closing_start_at',
+        'closing_end_at',
         'total_sales',
         'total_cogs',
         'total_profit',
         'variance_amount',
-        'checklist',
+        'cash_actual',
+        'is_balanced',
+        'is_locked',
         'notes',
         'closed_by',
         'closed_at',
     ];
 
     protected $casts = [
-        'closing_date'       => 'date',
-        'is_balanced'        => 'boolean',
-        'total_sales'        => 'decimal:2',
-        'total_cogs'         => 'decimal:2',
-        'total_profit'       => 'decimal:2',
-        'variance_amount'    => 'decimal:2',
-        'checklist'          => 'array',
-        'closed_at'          => 'datetime',
+        'closing_date'     => 'date',
+        'closing_start_at' => 'datetime',
+        'closing_end_at'   => 'datetime',
+        'closed_at'        => 'datetime',
+        'is_balanced'      => 'boolean',
+        'is_locked'        => 'boolean',
+        'total_sales'      => 'integer',
+        'total_cogs'       => 'integer',
+        'total_profit'     => 'integer',
+        'variance_amount'  => 'integer',
+        'cash_actual'      => 'integer',
     ];
 
     /* Relationships */

@@ -31,6 +31,19 @@
     $extraPrice = 100_000;
     $extraSub  = $extraQty * $extraPrice;
 
+        // === SERVICE dari MINIBAR ===
+    // Subtotal minibar untuk RG ini (jumlah line_total semua item minibar pada receipt milik RG)
+    $minibarSub = (int) (\App\Models\MinibarReceiptItem::query()
+        ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $rg?->id))
+        ->sum('line_total'));
+
+    // Persentase service — pakai field/resolusi yang tersedia di Reservation terlebih dahulu.
+    // Silakan sesuaikan fallback sesuai skema project-mu kalau ada lokasi lain untuk service percent.
+    $svcPct = (float) ($res?->service_percent ?? ($res?->service?->percent ?? 0));
+
+    // Nominal service yang DIHITUNG DARI MINIBAR
+    $serviceRp = (int) round(($minibarSub * $svcPct) / 100);
+
     // penalty: utamakan expected_checkin RG
     $pen = ReservationMath::latePenalty($rg?->expected_checkin ?: $res?->expected_arrival, $rg?->actual_checkin, $basicRate, [
         'tz' => 'Asia/Makassar',
@@ -39,7 +52,7 @@
 
     // Pajak & total (GLOBAL utk panel kanan)
     $taxPct  = (float) ($res?->tax?->percent ?? 0);
-    $taxBase = $afterDiscTimesNights + $chargeRp + $extraSub + $penaltyRp; // subtotal tanpa pajak
+    $taxBase = $afterDiscTimesNights + $chargeRp + $minibarSub + $serviceRp + $extraSub + $penaltyRp; // subtotal tanpa pajak (termasuk minibar & servicenya)
     $taxRp   = (int) round(($taxBase * $taxPct) / 100);
     $grand   = (int) ($taxBase + $taxRp);
 
@@ -198,7 +211,8 @@
                         <div class="hb-body" style="padding:0">
                             <table class="table">
                                 <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
-                                <tr><td class="k">Charge (Rp)</td><td class="v">{{ $money($chargeRp) }}</td></tr>
+                                <tr><td class="k">Charge</td><td class="v">{{ $money($chargeRp) }}</td></tr>
+                                <tr><td class="k">Minibar Subtotal</td><td class="v">{{ $money($minibarSub) }}</td></tr>
                                 <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
                                 @if ($penaltyRp > 0)
                                     <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
@@ -266,7 +280,7 @@
                                         $gDiscAmt = (int) round(($gRate * $gDiscPct) / 100);
                                         $gRateAfter = max(0, $gRate - $gDiscAmt);
 
-                                        // Service & Extra
+                                        // charge & Extra
                                         $gChargeRp  = (int) ($g->charge ?? 0);
                                         $gExtraRp   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
 
@@ -279,9 +293,18 @@
                                         );
                                         $gPenaltyRp = (int) ($gPen['amount'] ?? 0);
 
+                                        // Minibar subtotal per-guest
+                                        $gMinibarSub = (int) (\App\Models\MinibarReceiptItem::query()
+                                            ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $g->id))
+                                            ->sum('line_total'));
+
+                                        // Service persen (pakai yang sama dengan reservation terkait guest ini)
+                                        $gSvcPct   = (float) ($g->reservation?->service_percent ?? ($g->reservation?->service?->percent ?? 0));
+                                        $gServiceRp = (int) round(($gMinibarSub * $gSvcPct) / 100);
+
                                         // Tax per-guest (buat hitung footer; tidak ditampilkan sebagai kolom)
                                         $gTaxPct  = (float) ($g->reservation?->tax?->percent ?? 0);
-                                        $gTaxBase = $gRateAfter * $n + $gChargeRp + $gExtraRp + $gPenaltyRp;
+                                        $gTaxBase = $gRateAfter * $n + $gChargeRp + $gMinibarSub + $gServiceRp + $gExtraRp + $gPenaltyRp;
                                         $gTaxRp   = (int) round(($gTaxBase * $gTaxPct) / 100);
                                         $gGrand   = (int) ($gTaxBase + $gTaxRp);
 

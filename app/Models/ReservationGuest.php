@@ -20,7 +20,6 @@ class ReservationGuest extends Model
         'reservation_id',
         'guest_id',
         'room_id',
-        'id_tax',
         'person',
         'jumlah_orang',
         'male',
@@ -367,5 +366,31 @@ class ReservationGuest extends Model
                 }
             }
         }
+    }
+    /** Scope: tamu in-house (sudah CI & belum CO) untuk 1 hotel */
+    public function scopeCurrentInhouse($q, int $hotelId)
+    {
+        return $q->where('hotel_id', $hotelId)
+            ->whereNotNull('actual_checkin')
+            ->whereNull('actual_checkout');
+    }
+
+    /** Accessor label untuk dropdown */
+    public function getDisplayLabelAttribute(): string
+    {
+        $guestName = $this->guest->name
+            ?? $this->guest_name
+            ?? 'Unknown';
+
+        $resCode   = $this->reservation->code
+            ?? $this->reservation->reservation_code
+            ?? $this->reservation_code
+            ?? '-';
+
+        $roomNo    = $this->room->room_no         // ← sesuai model Room
+            ?? $this->room_no
+            ?? '-';
+
+        return sprintf('%s — %s (Room %s)', $guestName, $resCode, $roomNo);
     }
 }

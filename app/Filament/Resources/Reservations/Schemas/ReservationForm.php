@@ -21,6 +21,7 @@ use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Forms\Components\Placeholder;
 
 class ReservationForm
 {
@@ -647,16 +648,6 @@ class ReservationForm
                                     ->minValue(0)
                                     ->columnSpan(2),
 
-                                // Discount (2/12)
-                                TextInput::make('discount_percent')
-                                    ->label('Discount (%)')
-                                    ->numeric()
-                                    ->step('0.01')
-                                    ->minValue(0)
-                                    ->maxValue(100)
-                                    ->default(0)
-                                    ->columnSpan(2),
-
                                 TextInput::make('extra_bed')
                                     ->label('Ektra Bed')
                                     ->numeric()
@@ -711,12 +702,12 @@ class ReservationForm
                                 Select::make('pov')
                                     ->label('Purpose of Visit')
                                     ->options([
-                                        'BUSSINESS'   => 'Bussiness',
+                                        'BUSINESS'   => 'Business',
                                         'OFFICIAL' => 'Official',
                                         'TRANSIENT' => 'Transient',
-                                        'VACATION' => 'Vaction',
+                                        'VACATION' => 'Vacation',
                                     ])
-                                    ->default('BUSSINESS')
+                                    ->default('BUSINESS')
                                     ->columnSpan(4),
 
                                 TextInput::make('note')

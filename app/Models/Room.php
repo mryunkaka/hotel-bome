@@ -27,13 +27,11 @@ class Room extends Model
     protected $fillable = [
 
         'hotel_id',
-        // 'room_type_id', // jika pakai tabel room_types
-        'type',           // jika tidak pakai tabel room_types
+        'type',
         'room_no',
-        'floor',
         'price',
-        'status',           // TAMBAH
-        'status_changed_at' // TAMBAH
+        'status',
+        'status_changed_at'
     ];
 
     protected $casts = [

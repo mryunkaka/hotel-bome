@@ -17,6 +17,8 @@ class DatabaseSeeder extends Seeder
             InitialSetupSeeder::class,
             GuestSeeder::class,
             RoomSeeder::class,
+            MinibarItemSeeder::class,
+            MinibarVendorSeeder::class,
         ]);
     }
 }

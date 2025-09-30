@@ -32,9 +32,9 @@ class Invoice extends Model
 
     protected $casts = [
         'date'      => 'datetime',
-        'subtotal'  => 'decimal:2',
-        'tax_total' => 'decimal:2',
-        'total'     => 'decimal:2',
+        'subtotal'  => 'integer',
+        'tax_total' => 'integer',
+        'total'     => 'integer',
     ];
 
     // relations

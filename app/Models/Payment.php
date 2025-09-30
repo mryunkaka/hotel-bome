@@ -9,13 +9,12 @@ class Payment extends Model
 {
     protected $fillable = [
         'reservation_id',
-        'reservation_guest_id',
         'hotel_id',
         'amount',
         'method',
         'payment_date',
         'reference_no',
-        'note',
+        'notes',
         'created_by',
     ];
 

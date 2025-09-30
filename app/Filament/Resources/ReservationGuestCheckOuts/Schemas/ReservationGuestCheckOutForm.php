@@ -134,26 +134,21 @@ final class ReservationGuestCheckOutForm
                             ->alignment('center'),
 
                         // ===================== Split Bill =====================
+                        // ===================== Split Bill =====================
                         SchemaActions::make([
                             Action::make('split_bill')
                                 ->label('Split Bill')
                                 ->icon('heroicon-o-scissors')
-                                ->color('warning')
-                                ->button()
-                                ->disabled(
-                                    fn(\App\Models\ReservationGuest $record): bool =>
-                                    \App\Models\Payment::where('reservation_guest_id', $record->id)->exists()
-                                )
-                                ->tooltip(function (\App\Models\ReservationGuest $record) {
-                                    if (\App\Models\Payment::where('reservation_guest_id', $record->id)->exists()) {
-                                        return 'Payment already recorded — Split Bill is locked.';
-                                    }
-                                    return null;
-                                })
+                                ->disabled(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout))
+                                ->tooltip(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout)
+                                    ? 'Hanya tersedia setelah semua tamu telah check out.' : null)
                                 ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.bill', $record) . '?mode=single')
-                                ->openUrlInNewTab(),
+                                ->openUrlInNewTab()
+                                ->color('warning')
+                                ->button(),
                         ])->columns(1)->columnSpan(3)
                             ->alignment('center'),
+
 
                         // ===================== Payment & Check Out =====================
                         SchemaActions::make([
@@ -246,6 +241,32 @@ final class ReservationGuestCheckOutForm
                                                 'bill_closed_at'  => $now,
                                             ])->save();
 
+                                            // ===== Mark all minibar receipts for this guest as PAID on checkout =====
+                                            $mr = \App\Models\MinibarReceipt::query()
+                                                ->where('reservation_guest_id', $g->id);
+
+                                            // Siapkan kolom update yang kompatibel (tergantung skema tabel kamu)
+                                            $update = [];
+                                            if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) {
+                                                $update['is_paid'] = true;
+                                            }
+                                            if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'status')) {
+                                                $update['status'] = 'PAID';
+                                            }
+                                            if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_at')) {
+                                                $update['paid_at'] = $now;
+                                            }
+                                            if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_by')) {
+                                                $update['paid_by'] = \Illuminate\Support\Facades\Auth::id();
+                                            }
+                                            if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'updated_by')) {
+                                                $update['updated_by'] = \Illuminate\Support\Facades\Auth::id();
+                                            }
+
+                                            if (! empty($update)) {
+                                                $mr->update($update);
+                                            }
+
                                             if ($g->room_id) {
                                                 \App\Models\Room::whereKey($g->room_id)->update([
                                                     'status'            => \App\Models\Room::ST_VD,
@@ -321,7 +342,7 @@ final class ReservationGuestCheckOutForm
             'rg'                => $rg,
             'nights'            => $calc['nights'],
             'rate_after_disc'   => (int) $calc['room_after_disc'],
-            'service'           => (int) $calc['charge'],
+            'charge'           => (int) $calc['charge'],
             'extra_bed'         => (int) $calc['extra'],
             'late_penalty'      => (int) $calc['penalty'],
             'tax_percent'       => (float) $calc['tax_percent'],

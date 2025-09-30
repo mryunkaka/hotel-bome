@@ -11,16 +11,80 @@ use App\Models\BankLedger;
 use App\Models\IncomeItem;
 use App\Models\Reservation;
 use Illuminate\Support\Str;
+use Illuminate\Http\Request;
 use App\Models\AccountLedger;
+use App\Models\MinibarReceipt;
 use Illuminate\Support\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\ReservationGuest;
 use App\Support\ReservationMath;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Http\Request;
 
 Route::redirect('/', '/admin');
+
+Route::get('/admin/minibar-receipts/{receipt}/print', function (MinibarReceipt $receipt) {
+    // Relasi aman (hanya field pasti ada)
+    $receipt->load([
+        'items.item:id,name',
+        'reservationGuest.guest:id,name',
+        'reservationGuest.room:id,room_no,type',
+        'user:id,name',
+    ]);
+
+    // Hotel aktif
+    $hid   = (int) (session('active_hotel_id') ?? ($receipt->hotel_id ?? 0));
+    $hotel = Hotel::find($hid);
+
+    // Logo base64 (opsional)
+    $logoData = null;
+    if (function_exists('buildPdfLogoData')) {
+        $logoData = buildPdfLogoData($hotel?->logo ?? null);
+    } else {
+        $logoPath = $hotel?->logo ?? null;
+        if ($logoPath && ! Str::startsWith($logoPath, ['http://', 'https://'])) {
+            try {
+                $full = Storage::disk('public')->path($logoPath);
+                if (is_file($full)) {
+                    $mime     = mime_content_type($full) ?: 'image/png';
+                    $logoData = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($full));
+                }
+            } catch (\Throwable $e) {
+                // ignore logo error
+            }
+        }
+    }
+
+    $paper = strtoupper(request('paper', 'A5'));
+    $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
+        ? strtolower(request('o', 'portrait'))
+        : 'portrait';
+
+    $view = [
+        'paper'       => $paper,
+        'orientation' => $orientation,
+        'hotel'       => $hotel,
+        'logoData'    => $logoData,
+        'title'       => 'MINIBAR RECEIPT',
+        'receipt'     => $receipt,
+        'footerRight' => 'Thank you & enjoy your stay',
+    ];
+
+    if (request()->boolean('html')) {
+        return response()->view('prints.minibar.receipt', $view);
+    }
+
+    $pdf = Pdf::loadView('prints.minibar.receipt', $view)
+        ->setPaper($paper, $orientation)
+        ->setOption(['isRemoteEnabled' => false]);
+
+    $filename = 'minibar-receipt-' . ($receipt->receipt_no ?? $receipt->id) . '.pdf';
+
+    return response()->stream(fn() => print($pdf->output()), 200, [
+        'Content-Type'        => 'application/pdf',
+        'Content-Disposition' => 'inline; filename="' . $filename . '"',
+    ]);
+})->name('minibar-receipts.print');
 
 Route::patch('/admin/rooms/{room}/quick-status', function (Request $request, Room $room) {
     $validated = $request->validate([
@@ -198,7 +262,6 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'Content-Disposition' => 'inline; filename="' . $filename . '"',
     ]);
 })->name('reservation-guests.bill');
-
 
 // === PDF BILL (inline PDF)
 Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGuest $guest) {

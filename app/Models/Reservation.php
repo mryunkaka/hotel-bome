@@ -35,6 +35,7 @@ class Reservation extends Model
         'num_guests',
         'card_uid',
         'created_by',
+        'option_reservation',
     ];
 
     protected $casts = [
@@ -62,6 +63,11 @@ class Reservation extends Model
     | Relationships
     |--------------------------------------------------------------------------
     */
+
+    public function room(): BelongsTo
+    {
+        return $this->belongsTo(Room::class);
+    }
 
     public function tax(): BelongsTo
     {
@@ -168,25 +174,44 @@ class Reservation extends Model
     }
 
     /**
-     * Buat nomor reservasi unik format: HOTEL-RESVyymmxxxxx
-     * Contoh: HOTEL-RESV250900001 (tahun=25, bulan=09, running=00001 per bulan)
+     * Buat nomor unik untuk Reservation/Walk-in
+     * - Reservation: HOTEL-RESVyymmxxxx
+     * - Walk-in: 0001-WALKyymm/HotelName
      */
-    public static function generateReservationNo(?int $hotelId = null): string
+    public static function generateReservationNo(?int $hotelId = null, string $type = 'RESERVATION'): string
     {
-        // Tentukan hotel id (fallback dari session / user jika perlu)
         $hid = $hotelId
             ?? (Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? null);
 
-        $month  = Carbon::now()->format('m');  // mm
-        $year   = Carbon::now()->format('y');  // yy
-        $marker = "-RESV{$month}{$year}/";
+        $month = Carbon::now()->format('m'); // 09
+        $year  = Carbon::now()->format('y'); // 25
 
-        // Ambil nama hotel untuk sufiks
+        // Nama hotel untuk suffix
         $hotelName = optional(Hotel::find($hid))->name ?? 'HOTEL';
-        // Bersihkan karakter berisiko (biarkan spasi & tanda umum)
         $hotelName = trim(preg_replace('/[^\p{L}\p{N}\s\-\._]/u', '', $hotelName));
 
-        // Cari nomor terakhir bulan ini untuk hotel ini
+        if ($type === 'WALKIN') {
+            $marker = "-WALK{$year}{$month}/";
+
+            $query = static::query()
+                ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+                ->where('reservation_no', 'like', "%{$marker}%");
+
+            $last = $query->orderByDesc('id')->value('reservation_no');
+            $next = 1;
+
+            if ($last && preg_match('/^(\d{4})-WALK' . $year . $month . '\//', $last, $m)) {
+                $next = ((int) $m[1]) + 1;
+            }
+
+            $seq = str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+
+            return "{$seq}{$marker}{$hotelName}";
+        }
+
+        // Default: RESERVATION
+        $marker = "-RESV{$month}{$year}/";
+
         $query = static::query()
             ->when($hid, fn($q) => $q->where('hotel_id', $hid))
             ->where('reservation_no', 'like', "%{$marker}%");

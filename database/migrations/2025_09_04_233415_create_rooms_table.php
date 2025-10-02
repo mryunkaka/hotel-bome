@@ -23,6 +23,8 @@ return new class extends Migration {
             $table->timestamps();
             $table->softDeletes();
 
+            $table->dateTime('status_changed_at')->nullable();
+
             // Indexes
             $table->index(['hotel_id']);
             // Unik per hotel: 1 nomor kamar tidak boleh ganda dalam 1 hotel

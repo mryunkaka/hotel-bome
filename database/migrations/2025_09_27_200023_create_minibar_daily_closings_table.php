@@ -19,6 +19,10 @@ return new class extends Migration {
             $table->decimal('variance_amount', 15, 2)->default(0)->comment('nilai selisih jika ada');
             $table->json('checklist')->nullable()->comment('opsional: array centang/temuan');
             $table->text('notes')->nullable();
+            $table->dateTime('closing_start_at')->nullable();
+            $table->dateTime('closing_end_at')->nullable();
+            $table->decimal('cash_actual', 15, 2)->default(0);
+            $table->boolean('is_locked')->default(false);
             $table->foreignId('closed_by')->nullable()->constrained('users');
             $table->dateTime('closed_at')->nullable();
             $table->timestamps();

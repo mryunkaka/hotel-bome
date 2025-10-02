@@ -28,6 +28,19 @@ return new class extends Migration
             $table->integer('charge')->default(0); // ditambahkan setelah 'service'
             $table->decimal('room_rate', 15, 2)->default(0);
 
+            $table->unsignedTinyInteger('extra_bed')->default(0);
+            $table->string('breakfast', 10)->nullable();
+            $table->string('person', 30)->nullable();
+            $table->unsignedTinyInteger('male')->default(0);
+            $table->unsignedTinyInteger('female')->default(0);
+            $table->unsignedTinyInteger('children')->default(0);
+            $table->unsignedTinyInteger('jumlah_orang')->default(1);
+            $table->string('pov', 30)->nullable();
+            $table->text('note')->nullable();
+            $table->decimal('discount_percent', 5, 2)->default(0);
+            $table->string('charge_to', 20)->nullable();      // jika dipakai di UI
+            $table->string('rate_type', 20)->nullable();      // jika dipakai di UI
+
             // Informasi penagihan per-guest
             $table->string('bill_no', 50)->nullable();
             $table->dateTime('bill_closed_at')->nullable();

@@ -25,7 +25,7 @@ return new class extends Migration {
             // Meta pembayaran
             $table->string('method')->nullable();          // cash|card|transfer|others
             $table->dateTime('payment_date')->nullable();
-            $table->string('reference_no')->nullable();    // nomor transaksi
+            $table->string('reference_no', 100)->nullable();            // nomor transaksi
             $table->text('notes')->nullable();
 
             // Audit

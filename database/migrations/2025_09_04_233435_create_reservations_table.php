@@ -37,6 +37,8 @@ return new class extends Migration
             // Deposit (ringkas, tanpa kolom transisional)
             $table->string('deposit_type', 20)->nullable(); // DP/FOC/NONE
             $table->unsignedBigInteger('deposit')->default(0);
+            $table->decimal('deposit_room', 15, 2)->default(0);
+            $table->decimal('deposit_card', 15, 2)->default(0);
             // NEW: deposit dibersihkan/dipulangkan
             $table->timestamp('deposit_cleared_at')->nullable();
 

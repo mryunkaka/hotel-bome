@@ -19,6 +19,7 @@ return new class extends Migration {
             $table->unsignedInteger('floor')->default(1);
             $table->unsignedBigInteger('price')->default(0);
 
+            $table->string('status', 20)->default('VCI');
             $table->timestamps();
             $table->softDeletes();
 

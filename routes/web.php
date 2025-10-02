@@ -109,9 +109,6 @@ Route::patch('/admin/rooms/{room}/quick-status', function (Request $request, Roo
 
 // === GUEST BILL: 1 route untuk HTML (?html=1) & PDF (default) ===
 Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest $guest) {
-    // Opsional: batasi hanya setelah checkout
-    abort_if(blank($guest->actual_checkout), 403, 'Bill only available after guest has checked out.');
-
     // Muat reservation + relasi yang dibutuhkan (tax ada di reservation)
     $reservation = $guest->reservation()->with([
         'guest:id,name,salutation,address,city,phone,email',
@@ -199,6 +196,59 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         $guestsForView = collect([$guest]);
     }
 
+    // ============================================================
+    // === TAMBAHAN: Split khusus PAJAK (hanya untuk mode=all) ====
+    // ============================================================
+    $split = [
+        'enabled'        => false,
+        'guest_count'    => 0,
+        'split_count'    => 0,
+        'tax_total'      => 0,  // total pajak reservation (agregat semua RG)
+        'tax_share'      => 0,  // pajak/guest (dibagi rata)
+        'less_total'     => 0,  // total pajak yang sudah “diambil” via split
+        'to_pay_now'     => 0,  // TOTAL - less_total
+    ];
+
+    if ($mode === 'all') {
+        // Pakai koleksi yang sudah di-load di atas (hemat query)
+        $allForCalc = isset($allGuests) ? $allGuests : $reservation->reservationGuests()->with('reservation.tax')->get();
+
+        $sumGrandAll = 0;
+        $sumTaxAll   = 0;
+
+        foreach ($allForCalc as $gx) {
+            $cx = \App\Support\ReservationMath::guestBill($gx, ['tz' => 'Asia/Makassar']);
+            $sumGrandAll += (int) ($cx['grand']  ?? 0);
+            $sumTaxAll   += (int) ($cx['tax_rp'] ?? 0);
+        }
+
+        $guestCount = max(1, $allForCalc->count());
+
+        // Hitung jumlah RG yang ditandai "split" (pakai Payment marker method=SPLIT)
+        $splitCount = \App\Models\Payment::query()
+            ->where('reservation_id', $reservation->id)
+            ->where('method', 'SPLIT')
+            ->count();
+
+        if ($splitCount > 0 && $sumTaxAll > 0) {
+            // Bagi rata HANYA pajak total ke jumlah tamu
+            $taxShare   = (int) floor($sumTaxAll / $guestCount);
+            $lessTotal  = (int) min($sumGrandAll, $taxShare * $splitCount);
+            $toPayNow   = (int) max(0, $sumGrandAll - $lessTotal);
+
+            $split = [
+                'enabled'        => true,
+                'guest_count'    => $guestCount,
+                'split_count'    => $splitCount,
+                'tax_total'      => $sumTaxAll,
+                'tax_share'      => $taxShare,
+                'less_total'     => $lessTotal,
+                'to_pay_now'     => $toPayNow,
+            ];
+        }
+    }
+    // ====================== (akhir tambahan) =====================
+
     $view = [
         'paper'       => 'A4',
         'orientation' => $orientation,
@@ -243,7 +293,10 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'guests' => $guestsForView,
 
         // kirim mode ke blade agar footer & pembagian tax bisa disesuaikan
-        'mode' => $mode,
+        'mode'  => $mode,
+
+        // kirim info split (baru)
+        'split' => $split,
     ];
 
     // Preview HTML ?html=1, selain itu render PDF inline
@@ -264,24 +317,24 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
 })->name('reservation-guests.bill');
 
 // === PDF BILL (inline PDF)
-Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGuest $guest) {
-    // Reuse data dari route HTML di atas (copy blok perhitungan yang sama)
-    // Agar DRY, kita panggil ulang closure di atas secara sederhana:
-    $req = request()->duplicate([], [], request()->attributes->all());
-    $html = app()->handle(Request::create(url()->route('reservation-guests.bill', ['guest' => $guest->id]), 'GET', $req->all()))->getContent();
+// Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGuest $guest) {
+//     // Reuse data dari route HTML di atas (copy blok perhitungan yang sama)
+//     // Agar DRY, kita panggil ulang closure di atas secara sederhana:
+//     $req = request()->duplicate([], [], request()->attributes->all());
+//     $html = app()->handle(Request::create(url()->route('reservation-guests.bill', ['guest' => $guest->id]), 'GET', $req->all()))->getContent();
 
-    // Render HTML yg sama ke PDF
-    $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true) ? strtolower(request('o', 'portrait')) : 'portrait';
-    $pdf = Pdf::loadHTML($html)->setPaper('a4', $orientation)->setOption(['isRemoteEnabled' => false]);
+//     // Render HTML yg sama ke PDF
+//     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true) ? strtolower(request('o', 'portrait')) : 'portrait';
+//     $pdf = Pdf::loadHTML($html)->setPaper('a4', $orientation)->setOption(['isRemoteEnabled' => false]);
 
-    $reservation = $guest->reservation;
-    $filename = 'bill-' . ($reservation?->reservation_no ?? $reservation?->id ?? 'reservation') . '-' . $guest->id . '.pdf';
+//     $reservation = $guest->reservation;
+//     $filename = 'bill-' . ($reservation?->reservation_no ?? $reservation?->id ?? 'reservation') . '-' . $guest->id . '.pdf';
 
-    return response()->stream(fn() => print($pdf->output()), 200, [
-        'Content-Type'        => 'application/pdf',
-        'Content-Disposition' => 'inline; filename="' . $filename . '"',
-    ]);
-})->name('reservation-guests.bill.pdf');
+//     return response()->stream(fn() => print($pdf->output()), 200, [
+//         'Content-Type'        => 'application/pdf',
+//         'Content-Disposition' => 'inline; filename="' . $filename . '"',
+//     ]);
+// })->name('reservation-guests.bill.pdf');
 
 Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest $guest) {
     $reservation = $guest->reservation()

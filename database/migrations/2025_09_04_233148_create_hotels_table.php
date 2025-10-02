@@ -16,6 +16,8 @@ return new class extends Migration {
             $table->string('phone')->nullable();
             $table->string('no_reg')->nullable();
             $table->string('logo')->nullable();
+            $table->string('city')->nullable();       // TAMBAHKAN INI
+            $table->softDeletes();
             $table->timestamps();
         });
     }

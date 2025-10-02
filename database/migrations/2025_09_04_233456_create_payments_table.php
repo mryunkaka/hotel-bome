@@ -10,22 +10,32 @@ return new class extends Migration {
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId('reservation_id')
-                ->constrained('reservations')
-                ->cascadeOnDelete();
-            $table->foreignId('hotel_id')->constrained()->cascadeOnDelete();
+            // Relations
+            $table->foreignId('reservation_id')->constrained('reservations')->cascadeOnDelete();
+            $table->foreignId('hotel_id')->constrained('hotels')->cascadeOnDelete();
+            // relasi langsung ke reservation_guest (opsional)
+            $table->foreignId('reservation_guest_id')->nullable()->constrained('reservation_guests')->nullOnDelete();
 
-            $table->unsignedInteger('amount');  // dalam satuan terkecil (misal rupiah tanpa desimal)
-            $table->string('method')->nullable(); // cash|card|transfer|others
+            // Nilai & deposit tracking
+            $table->unsignedInteger('amount');             // rupiah tanpa desimal
+            $table->integer('deposit_used')->default(0);    // total deposit yang dipakai pada transaksi ini
+            $table->boolean('is_deposit_refund')->default(false);
+            $table->string('deposit_refund_note')->nullable();
+
+            // Meta pembayaran
+            $table->string('method')->nullable();          // cash|card|transfer|others
             $table->dateTime('payment_date')->nullable();
-            $table->string('reference_no')->nullable(); // no transaksi
-            $table->text('note')->nullable();
+            $table->string('reference_no')->nullable();    // nomor transaksi
+            $table->text('notes')->nullable();
 
+            // Audit
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
 
             $table->timestamps();
 
+            // Indexes
             $table->index(['hotel_id', 'payment_date']);
+            $table->index(['hotel_id', 'reservation_guest_id']);
         });
     }
 

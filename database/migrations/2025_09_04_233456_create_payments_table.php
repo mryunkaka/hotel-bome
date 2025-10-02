@@ -18,6 +18,7 @@ return new class extends Migration {
 
             // Nilai & deposit tracking
             $table->unsignedInteger('amount');             // rupiah tanpa desimal
+            $table->decimal('actual_amount', 15, 2)->default(0);
             $table->integer('deposit_used')->default(0);    // total deposit yang dipakai pada transaksi ini
             $table->boolean('is_deposit_refund')->default(false);
             $table->string('deposit_refund_note')->nullable();

@@ -361,22 +361,43 @@
                     ? (int) $split['to_pay_now']
                     : (int) $sumGrand;
 
-                // hanya pembayaran nyata (bukan DEPOSIT*, bukan SPLIT)
-                $amountPaid = 0;
-                if ($resv?->id) {
-                    $amountPaid = (int) \App\Models\Payment::where('reservation_id', $resv->id)
-                        ->where(function ($q) {
+                // daftar metode yang TIDAK dihitung sebagai "payment tunai/kartu" biasa
+                $excludeAsCash = [
+                    'DEPOSIT','DEPOSIT CARD','DEPOSIT_CARD','DEPOSIT CASH','DEPOSITCARD','DEPOSIT-CARD',
+                ];
+
+                $reservationId = (int) ($resv->id ?? 0);
+
+                // 1) Pembayaran nyata: sum(amount) SEMUA payment yang bukan deposit & bukan SPLIT
+                $amountPaidCash = 0;
+                if ($reservationId > 0) {
+                    $amountPaidCash = (int) \App\Models\Payment::query()
+                        ->where('reservation_id', $reservationId)
+                        ->where(function ($q) use ($excludeAsCash) {
                             $q->whereNull('method')
-                            ->orWhereNotIn('method', [
-                                'DEPOSIT','DEPOSIT CARD','DEPOSIT_CARD','DEPOSIT CASH','DEPOSITCARD','DEPOSIT-CARD','SPLIT',
-                            ]);
+                            ->orWhereNotIn('method', array_merge($excludeAsCash, ['SPLIT']));
                         })
                         ->sum('amount');
                 }
 
-                $effectiveDeposit = (int) $depositCardReservation;
-                $dueAfterDeposit  = max(0, $billBase - $effectiveDeposit);
+                // 2) Pembayaran hasil "Split Bill": sum(actual_amount) KHUSUS method = SPLIT
+                //    (karena entri SPLIT menyimpan nominal yang harus dibayar per-guest di kolom actual_amount)
+                $amountPaidSplitActual = 0;
+                if ($reservationId > 0) {
+                    $amountPaidSplitActual = (int) \App\Models\Payment::query()
+                        ->where('reservation_id', $reservationId)
+                        ->where('method', 'SPLIT')
+                        ->sum('actual_amount');
+                }
 
+                // 3) Total yang dianggap sudah dibayar di bill
+                $amountPaid = $amountPaidCash + $amountPaidSplitActual;
+
+                // 4) Deposit kartu tetap diperlakukan sebagai pengurang tagihan (bukan "Amount Paid")
+                $effectiveDeposit = (int) $depositCardReservation;
+
+                // 5) Hitung due/change
+                $dueAfterDeposit  = max(0, $billBase - $effectiveDeposit);
                 $change    = max(0, $amountPaid - $dueAfterDeposit);
                 $remaining = max(0, $dueAfterDeposit - $amountPaid);
             @endphp
@@ -405,6 +426,7 @@
                 </tr>
             @endif
         @endif
+
     </table>
 
 

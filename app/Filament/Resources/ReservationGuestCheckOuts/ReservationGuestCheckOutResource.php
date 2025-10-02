@@ -31,11 +31,6 @@ class ReservationGuestCheckOutResource extends Resource
         return ReservationGuestCheckOutForm::configure($schema);
     }
 
-    public static function infolist(Schema $schema): Schema
-    {
-        return ReservationGuestCheckOutInfolist::configure($schema);
-    }
-
     public static function table(Table $table): Table
     {
         return ReservationGuestCheckOutsTable::configure($table);

@@ -156,10 +156,35 @@ final class ReservationGuestCheckOutForm
                                         }
                                     }
 
-                                    // 2) Buat payment marker untuk RG ini kalau belum ada
+                                    // 2) Hitung amount & actual_amount (SUBTOTAL + pajak yang dibagi rata)
                                     $res = $record->reservation;
                                     if ($res) {
-                                        \App\Models\Payment::firstOrCreate(
+                                        // Ambil breakdown untuk tamu ini
+                                        $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+
+                                        // Grand total & pajak menurut breakdown
+                                        $grand      = (int) ($calc['grand_total'] ?? $calc['grand'] ?? 0);
+                                        $taxTotalRp = (int) ($calc['tax_rp']      ?? 0);
+                                        $taxPct     = (float)($calc['tax_percent'] ?? 0.0);
+
+                                        // SUBTOTAL = grand total tanpa pajak
+                                        $subTotal = max(0, $grand - $taxTotalRp);
+
+                                        // Jumlah tamu dalam reservation (minimal 1)
+                                        $participants = max(1, (int) $res->reservationGuests()->count());
+
+                                        // Pajak per orang = (persentase pajak total) / (jumlah peserta)
+                                        // Contoh: 12% dan 3 orang => 4% per orang
+                                        $taxPerPersonPct = $taxPct / $participants;
+
+                                        // Nilai pajak untuk tamu ini
+                                        $taxPerPersonRp = (int) round($subTotal * ($taxPerPersonPct / 100));
+
+                                        // Amount yang dibayar tamu ini (SUBTOTAL + pajak bagiannya)
+                                        $actualAmount = (int) $subTotal + $taxPerPersonRp;
+
+                                        // 3) Buat / update payment marker SPLIT untuk RG ini dgn nilai amount & actual_amount
+                                        \App\Models\Payment::updateOrCreate(
                                             [
                                                 // kunci unik marker split bill untuk RG ini
                                                 'reservation_guest_id' => $record->id,
@@ -168,7 +193,8 @@ final class ReservationGuestCheckOutForm
                                             [
                                                 'hotel_id'       => $res->hotel_id,
                                                 'reservation_id' => $res->id,
-                                                'amount'         => 0,                       // marker saja; tidak menambah kas
+                                                'amount'         => $actualAmount,
+                                                'actual_amount'  => $actualAmount,
                                                 'payment_date'   => now(),
                                                 'notes'          => 'Auto entry (Split Bill)',
                                                 'created_by'     => \Illuminate\Support\Facades\Auth::id(),
@@ -176,7 +202,7 @@ final class ReservationGuestCheckOutForm
                                         );
                                     }
 
-                                    // 3) Buka Bill (mode=single) di tab baru via JS
+                                    // 4) Buka Bill (mode=single) di tab baru via JS
                                     $url = route('reservation-guests.bill', $record) . '?mode=single';
                                     $livewire->js("window.open('{$url}', '_blank', 'noopener,noreferrer')");
                                 })
@@ -199,13 +225,38 @@ final class ReservationGuestCheckOutForm
                                 ->schema([
                                     Hidden::make('reservation_guest_id')
                                         ->default(fn(\App\Models\ReservationGuest $record) => $record->id),
+
+                                    // === Actual Amount: ambil LANGSUNG dari Amount to pay now (preview) ===
+                                    TextInput::make('actual_amount_view')
+                                        ->label('Actual Amount (IDR)')
+                                        ->disabled()
+                                        ->dehydrated(false)
+                                        ->mask(RawJs::make('$money($input)'))
+                                        ->extraInputAttributes(['inputmode' => 'numeric'])
+                                        ->default(function (\App\Models\ReservationGuest $record): int {
+                                            $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+                                            return (int) ($calc['reservation_open_due'] ?? 0);   // == Amount to pay now
+                                        }),
+
+                                    Hidden::make('actual_amount')
+                                        ->default(function (\App\Models\ReservationGuest $record): int {
+                                            $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+                                            return (int) ($calc['reservation_open_due'] ?? 0);   // == Amount to pay now
+                                        }),
+
+                                    // Default-kan amount ke actual_amount biar auto terisi
                                     TextInput::make('amount')
                                         ->label('Amount (IDR)')
                                         ->numeric()
                                         ->minValue(0)
                                         ->mask(RawJs::make('$money($input)'))
                                         ->stripCharacters(',')
-                                        ->required(),
+                                        ->required()
+                                        ->default(function (\App\Models\ReservationGuest $record): int {
+                                            $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+                                            return (int) ($calc['reservation_open_due'] ?? 0);
+                                        }),
+
                                     Select::make('method')
                                         ->label('Method')
                                         ->options([
@@ -215,26 +266,39 @@ final class ReservationGuestCheckOutForm
                                             'OTHER'    => 'Other',
                                         ])
                                         ->required(),
+
                                     Textarea::make('note')->label('Note')->rows(2),
                                 ])
                                 ->mutateDataUsing(function (array $data, \App\Models\ReservationGuest $record) {
-                                    if (!isset($data['amount']) || ! $data['amount']) {
-                                        $res = $record->reservation;
-                                        $sumDue = 0;
-                                        if ($res) {
-                                            $openGuests = $res->reservationGuests()->whereNull('actual_checkout')->get();
-                                            foreach ($openGuests as $g) {
-                                                $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($g);
-                                                $due  = max(0, (int) $calc['grand_total'] - (int) $calc['deposit']);
-                                                $sumDue += $due;
-                                            }
-                                        }
-                                        $data['amount'] = (int) $sumDue;
+                                    // Safety fallback: kalau user hapus amount, pakai angka dari breakdown (Amount to pay now)
+                                    if (!isset($data['amount']) || $data['amount'] === '' || $data['amount'] === null) {
+                                        $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+                                        $data['amount'] = (int) ($calc['reservation_open_due'] ?? 0);
                                     }
+
+                                    // pastikan hidden actual_amount juga sinkron
+                                    if (!isset($data['actual_amount'])) {
+                                        $calc = \App\Filament\Resources\ReservationGuestCheckOuts\Schemas\ReservationGuestCheckOutForm::buildBreakdown($record);
+                                        $data['actual_amount'] = (int) ($calc['reservation_open_due'] ?? 0);
+                                    }
+
                                     $data['reservation_guest_id'] = (int) $record->id;
                                     return $data;
                                 })
                                 ->action(function (array $data, \App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
+                                    // Validasi: amount harus ≥ actual_amount
+                                    $pay  = (int) ($data['amount'] ?? 0);
+                                    $must = (int) ($data['actual_amount'] ?? 0);
+
+                                    if ($pay < $must) {
+                                        \Filament\Notifications\Notification::make()
+                                            ->title('Amount kurang dari tagihan.')
+                                            ->body('Jumlah yang dibayar harus ≥ Actual Amount.')
+                                            ->danger()
+                                            ->send();
+                                        return; // batal insert
+                                    }
+
                                     DB::transaction(function () use ($data, $record) {
                                         if (filled($record->actual_checkout)) {
                                             \Filament\Notifications\Notification::make()
@@ -254,24 +318,32 @@ final class ReservationGuestCheckOutForm
                                         }
 
                                         \App\Models\Payment::create([
-                                            'hotel_id'       => $res->hotel_id,
+                                            'hotel_id'             => $res->hotel_id,
                                             'reservation_id'       => $res->id,
                                             'reservation_guest_id' => $record->id,
-                                            'amount'       => (int) $data['amount'],
-                                            'method'       => (string) $data['method'],
-                                            'payment_date' => now(),
+                                            // amount = uang yang dibayar guest
+                                            'amount'               => (int) $data['amount'],
+                                            // actual_amount = persis "Amount to pay now" saat modal dibuka
+                                            'actual_amount'        => (int) $data['actual_amount'],
+                                            'method'               => (string) $data['method'],
+                                            'payment_date'         => now(),
                                             // perhatikan: di model fillable kamu pakai 'notes', bukan 'note'
-                                            'notes'        => (string) ($data['note'] ?? ''),
-                                            'created_by'   => \Illuminate\Support\Facades\Auth::id(),
+                                            'notes'                => (string) ($data['note'] ?? ''),
+                                            'created_by'           => \Illuminate\Support\Facades\Auth::id(),
                                         ]);
 
-
                                         $now = now();
-                                        $openGuests = $res->reservationGuests()->whereNull('actual_checkout')->get();
+                                        $resFresh = $res->fresh();
+
+                                        $openGuests = $resFresh->reservationGuests()->whereNull('actual_checkout')->get();
                                         foreach ($openGuests as $g) {
-                                            if (\App\Models\Payment::where('reservation_guest_id', $g->id)->exists()) {
+                                            // checkout-kan SELALU untuk guest pemicu ($record),
+                                            // dan checkout-kan guest lain hanya jika SUDAH ada payment.
+                                            $hasPayment = \App\Models\Payment::where('reservation_guest_id', $g->id)->exists();
+                                            if (! $hasPayment && $g->id !== $record->id) {
                                                 continue;
                                             }
+
                                             $g->forceFill([
                                                 'actual_checkout' => $now,
                                                 'bill_closed_at'  => $now,
@@ -281,7 +353,6 @@ final class ReservationGuestCheckOutForm
                                             $mr = \App\Models\MinibarReceipt::query()
                                                 ->where('reservation_guest_id', $g->id);
 
-                                            // Siapkan kolom update yang kompatibel (tergantung skema tabel kamu)
                                             $update = [];
                                             if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) {
                                                 $update['is_paid'] = true;
@@ -298,7 +369,6 @@ final class ReservationGuestCheckOutForm
                                             if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'updated_by')) {
                                                 $update['updated_by'] = \Illuminate\Support\Facades\Auth::id();
                                             }
-
                                             if (! empty($update)) {
                                                 $mr->update($update);
                                             }
@@ -311,9 +381,9 @@ final class ReservationGuestCheckOutForm
                                             }
                                         }
 
-                                        if ($res->reservationGuests()->whereNull('actual_checkout')->count() === 0 && ! $res->checkout_date) {
-                                            $res->checkout_date = $now;
-                                            $res->save();
+                                        if ($resFresh->reservationGuests()->whereNull('actual_checkout')->count() === 0 && ! $resFresh->checkout_date) {
+                                            $resFresh->checkout_date = $now;
+                                            $resFresh->save();
                                         }
 
                                         \Filament\Notifications\Notification::make()
@@ -329,25 +399,26 @@ final class ReservationGuestCheckOutForm
                                     $jsList   = json_encode($listUrl);
 
                                     $livewire->js(<<<JS
-                                    (() => {
-                                    // buka print di tab baru
-                                    const a = document.createElement('a');
-                                    a.href = {$jsPrint};
-                                    a.target = '_blank';
-                                    a.rel = 'noopener,noreferrer';
-                                    a.style.display = 'none';
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    document.body.removeChild(a);
+            (() => {
+            // buka print di tab baru
+            const a = document.createElement('a');
+            a.href = {$jsPrint};
+            a.target = '_blank';
+            a.rel = 'noopener,noreferrer';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
 
-                                    // redirect halaman sekarang ke list
-                                    window.location.href = {$jsList};
-                                    })();
-                                    JS);
+            // redirect halaman sekarang ke list
+            window.location.href = {$jsList};
+            })();
+            JS);
 
                                     return;
                                 }),
                         ])->columns(1)->columnSpan(3)->alignment('center'),
+
                     ]),
                 ])
                 ->columnSpanFull(),

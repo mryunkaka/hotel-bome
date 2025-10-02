@@ -20,9 +20,9 @@ class MinibarReceiptResource extends Resource
 {
     protected static ?string $model = MinibarReceipt::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingStorefront;
 
-    protected static ?string $recordTitleAttribute = 'receipt';
+    protected static ?string $navigationLabel = 'Minibar';
 
     public static function form(Schema $schema): Schema
     {

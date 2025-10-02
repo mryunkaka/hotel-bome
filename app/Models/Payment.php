@@ -12,6 +12,7 @@ class Payment extends Model
         'reservation_guest_id',
         'hotel_id',
         'amount',
+        'actual_amount',
         'method',
         'payment_date',
         'reference_no',

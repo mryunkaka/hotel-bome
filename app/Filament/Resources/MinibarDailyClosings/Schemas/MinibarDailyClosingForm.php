@@ -127,6 +127,7 @@ class MinibarDailyClosingForm
                         // Variance MANUAL; auto-toggle Balanced? (hit. saat blur)
                         TextInput::make('variance_amount')
                             ->label('Variance')
+                            ->readOnly()
                             ->numeric()
                             ->default(0)
                             ->dehydrated(true)

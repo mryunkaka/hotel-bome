@@ -19,9 +19,10 @@ use Illuminate\Support\Facades\Session;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Section;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Forms\Components\Placeholder;
 
 class ReservationForm
 {
@@ -300,6 +301,12 @@ class ReservationForm
                                         TextInput::make('id_card')->label('Identity Number')->maxLength(100)->columnSpan(4),
                                         TextInput::make('phone')->label('Phone No')->maxLength(50)->columnSpan(4),
                                         TextInput::make('email')->label('Email')->email()->maxLength(150)->columnSpan(4),
+                                        // ⬇️ Tambahan: Birth & Issued
+                                        TextInput::make('birth_place')->label('Birth Place')->maxLength(100)->columnSpan(6),
+                                        DatePicker::make('birth_date')->label('Birth Date')->columnSpan(6),
+
+                                        TextInput::make('issued_place')->label('Issued Place')->maxLength(100)->columnSpan(6),
+                                        DatePicker::make('issued_date')->label('Issued Date')->columnSpan(6),
                                         Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
                                     ]),
                                 ]),

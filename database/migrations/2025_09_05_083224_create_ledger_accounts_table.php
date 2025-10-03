@@ -17,9 +17,9 @@ return new class extends Migration
             // Tipe / sumber entri (room, minibar, resto, laundry, adjustment, dsb)
             $table->string('ledger_type', 50)->index()->comment('Sumber entri, mis. minibar, room, restaurant, dll');
 
-            // Referensi polymorphic ke tabel sumber
+            // Referensi polymorphic ke tabel sumber (tanpa FK agar longgar)
             $table->unsignedBigInteger('reference_id')->nullable()->comment('ID sumber transaksi (daily closing, receipt, dll)');
-            $table->string('reference_table')->nullable()->comment('Nama tabel sumber transaksi');
+            $table->string('reference_table', 100)->nullable()->comment('Nama tabel sumber transaksi');
 
             // Akun & metode pembayaran
             $table->string('account_code', 50)->nullable()->comment('Kode akun untuk integrasi COA');
@@ -31,7 +31,7 @@ return new class extends Migration
 
             // Info transaksi
             $table->date('date')->index();
-            $table->string('description')->nullable();
+            $table->string('description', 255)->nullable();
 
             // Posting status
             $table->boolean('is_posted')->default(false);
@@ -45,6 +45,23 @@ return new class extends Migration
             $table->index(['hotel_id', 'ledger_type']);
             $table->index(['hotel_id', 'date']);
             $table->index(['hotel_id', 'account_code']);
+
+            // Index bantu untuk audit/jejak sumber & filter method
+            $table->index(['hotel_id', 'reference_table', 'reference_id']);
+            $table->index(['hotel_id', 'method', 'date']);
+
+            // Idempoten: mencegah double-posting entri yang sama
+            $table->unique([
+                'hotel_id',
+                'ledger_type',
+                'reference_table',
+                'reference_id',
+                'account_code',
+                'method',
+                'date',
+                'debit',
+                'credit',
+            ], 'uniq_ledger_signature');
         });
     }
 

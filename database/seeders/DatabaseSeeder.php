@@ -2,23 +2,23 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
-// use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
         $this->call([
-            InitialSetupSeeder::class,
-            GuestSeeder::class,
-            RoomSeeder::class,
-            MinibarItemSeeder::class,
+            TruncateTablesSeeder::class,
+            InitialSetupSeeder::class,   // hotel & users (roles)
+            TaxSettingSeeder::class,     // pajak aktif global
+            RoomSeeder::class,           // kamar
+            GuestSeeder::class,          // tamu dummy
+            ReservationGroupSeeder::class,
+            // ReservationGraphSeeder::class, // skenario A/B/C
             MinibarVendorSeeder::class,
+            MinibarItemSeeder::class,
+            MinibarDemoSeeder::class,    // demo struk & movement
         ]);
     }
 }

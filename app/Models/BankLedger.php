@@ -5,8 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Session;
 
 class BankLedger extends Model
 {
@@ -19,12 +17,21 @@ class BankLedger extends Model
         'withdraw',
         'date',
         'description',
+        'method',
+        'ledger_type',
+        'reference_id',
+        'reference_table',
+        'is_posted',
+        'posted_at',
+        'posted_by',
     ];
 
     protected $casts = [
-        'deposit'  => 'decimal:2',
-        'withdraw' => 'decimal:2',
-        'date'     => 'date',
+        'deposit'   => 'decimal:2',
+        'withdraw'  => 'decimal:2',
+        'date'      => 'date',
+        'is_posted' => 'boolean',
+        'posted_at' => 'datetime',
     ];
 
     public function hotel(): BelongsTo
@@ -35,17 +42,5 @@ class BankLedger extends Model
     public function bank(): BelongsTo
     {
         return $this->belongsTo(Bank::class);
-    }
-
-    protected static function booted(): void
-    {
-        // Kunci ke hotel konteks aktif (super admin via session, user biasa via hotel_id)
-        static::creating(function (self $m): void {
-            $m->hotel_id = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? $m->hotel_id;
-        });
-
-        static::updating(function (self $m): void {
-            $m->hotel_id = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id ?? $m->hotel_id;
-        });
     }
 }

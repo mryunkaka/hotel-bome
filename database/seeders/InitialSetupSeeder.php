@@ -12,7 +12,7 @@ class InitialSetupSeeder extends Seeder
 {
     public function run(): void
     {
-        // === 1. Buat 2 hotel ===
+        // 1) Hotel
         $hotel1 = Hotel::create([
             'name' => 'Hotel Bome',
             'address' => 'Jl. Merdeka No. 123',
@@ -27,12 +27,12 @@ class InitialSetupSeeder extends Seeder
             'email' => 'info@hotelsukamaju.test',
         ]);
 
-        // === 2. Roles ===
+        // 2) Roles
         foreach (['super admin', 'supervisor', 'resepsionis'] as $r) {
             Role::findOrCreate($r, 'web');
         }
 
-        // === 3. Super Admin ===
+        // 3) Super Admin
         $superAdmin = User::create([
             'name' => 'Super Admin',
             'email' => 'admin@system.test',
@@ -41,7 +41,7 @@ class InitialSetupSeeder extends Seeder
         ]);
         $superAdmin->assignRole('super admin');
 
-        // === 4. Hotel 1 Users ===
+        // 4) Hotel 1 Users
         $sup1 = User::create([
             'name' => 'Supervisor Bome',
             'email' => 'supervisor.bome@test.com',
@@ -58,7 +58,7 @@ class InitialSetupSeeder extends Seeder
         ]);
         $res1->assignRole('resepsionis');
 
-        // === 5. Hotel 2 Users ===
+        // 5) Hotel 2 Users
         $sup2 = User::create([
             'name' => 'Supervisor Suka Maju',
             'email' => 'supervisor.sukamaju@test.com',

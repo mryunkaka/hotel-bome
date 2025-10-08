@@ -9,12 +9,9 @@ class RoomSeeder extends Seeder
 {
     public function run(): void
     {
-        // Pakai hotel BOME jika ada; jika tidak, ambil hotel pertama atau 1.
-        $hotelId = DB::table('hotels')->where('id', '1')->value('id')
-            ?? DB::table('hotels')->orderBy('id')->value('id')
-            ?? 1;
+        $hotelId = \App\Models\Hotel::where('name', 'Hotel Bome')->value('id')
+            ?? \App\Models\Hotel::orderBy('id')->value('id');
 
-        // Harga per kategori (Rp)
         $prices = [
             'DELUXE TWIN'     => 400_000,
             'DELUXE PREMIUM'  => 400_000,
@@ -24,18 +21,15 @@ class RoomSeeder extends Seeder
             'STANDARD 2'      => 175_000,
         ];
 
-        // Daftar kamar (sesuai screenshot)
         $rooms = [
-            // Lantai 1
+            // Lt.1
             ['room_no' => '101', 'type' => 'DELUXE TWIN'],
             ['room_no' => '102', 'type' => 'DELUXE TWIN'],
             ['room_no' => '103', 'type' => 'DELUXE TWIN'],
-
             ['room_no' => '108', 'type' => 'SUPERIOR QUEEN'],
             ['room_no' => '109', 'type' => 'SUPERIOR QUEEN'],
             ['room_no' => '110', 'type' => 'SUPERIOR QUEEN'],
-
-            // Lantai 2
+            // Lt.2
             ['room_no' => '201', 'type' => 'SUPERIOR TWIN'],
             ['room_no' => '202', 'type' => 'STANDARD 1'],
             ['room_no' => '203', 'type' => 'STANDARD 1'],
@@ -54,26 +48,23 @@ class RoomSeeder extends Seeder
 
         $payload = [];
         foreach ($rooms as $r) {
-            $roomNo = (int) $r['room_no'];
-            $type   = $r['type'];
-            $price  = $prices[$type] ?? 0;
-
+            $rn = (int) $r['room_no'];
             $payload[] = [
-                'hotel_id'  => $hotelId,
-                'type'      => $type,
-                'room_no'   => (string) $roomNo,
-                'floor'     => intdiv($roomNo, 100), // 101 -> 1, 216 -> 2
-                'price'     => $price,
+                'hotel_id'   => $hotelId,
+                'type'       => $r['type'],
+                'room_no'    => $r['room_no'],
+                'floor'      => intdiv($rn, 100),
+                'price'      => $prices[$r['type']] ?? 0,
+                'status'     => \App\Models\Room::ST_VCI ?? 'VCI', // jika model define konstanta
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
         }
 
-        // Upsert berdasarkan (hotel_id, room_no)
         DB::table('rooms')->upsert(
             $payload,
             ['hotel_id', 'room_no'],
-            ['type', 'floor', 'price', 'updated_at']
+            ['type', 'floor', 'price', 'status', 'updated_at']
         );
     }
 }

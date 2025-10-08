@@ -3,18 +3,15 @@
 namespace App\Filament\Resources\Reservations\Pages;
 
 use App\Models\Reservation;
-use Filament\Actions\Action;
-use Illuminate\Support\Carbon;
 use App\Models\ReservationGuest;
-use Filament\Actions\CreateAction;
-use Illuminate\Support\Facades\DB;
-use Filament\Forms\Components\Radio;
-use Illuminate\Support\Facades\Auth;
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
-use App\Filament\Resources\Walkins\WalkinResource;
-use App\Filament\Resources\Walkins\Schemas\WalkinForm;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; // ⬅️ penting
 use App\Filament\Resources\Reservations\ReservationResource;
+use App\Filament\Resources\Walkins\WalkinResource;
 
 class ListReservations extends ListRecords
 {
@@ -23,21 +20,24 @@ class ListReservations extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            // === New Reservation (otomatis buat / reuse draft, lalu ke edit) ===
-            Action::make('newReservation')
+            // App\Filament\Resources\Reservations\Pages\ListReservations.php
+
+            // ... use Log; dll tetap
+
+            Action::make('reservation')
                 ->label('Reservation')
                 ->icon('heroicon-m-plus')
                 ->color('primary')
                 ->requiresConfirmation(false)
                 ->action(function () {
                     $user    = Auth::user();
-                    $hotelId = (int) (session('active_hotel_id') ?? 1);
+                    $hotelId = (int) (session('active_hotel_id') ?? ($user->hotel_id ?? 1));
 
-                    // Reuse draft kosong hari ini milik user (mode RESERVATION)
-                    $existing = Reservation::query()
+                    // HANYA cari draft yang guest_id-nya MASIH NULL
+                    $existing = \App\Models\Reservation::query()
                         ->where('hotel_id', $hotelId)
-                        ->whereNull('guest_id')
-                        ->whereNull('group_id')
+                        ->where('option_reservation', 'reservation') // lowercase sesuai migration
+                        ->whereNull('guest_id')                      // ⬅️ kunci utama permintaanmu
                         ->whereNull('checkin_date')
                         ->whereNull('checkout_date')
                         ->whereDate('created_at', today())
@@ -46,51 +46,46 @@ class ListReservations extends ListRecords
                         ->first();
 
                     if ($existing) {
-                        Notification::make()
+                        \Filament\Notifications\Notification::make()
                             ->title('Continue existing reservation')
                             ->body("No: {$existing->reservation_no} (waiting for guest)")
-                            ->info()
-                            ->send();
+                            ->info()->send();
 
                         return redirect()->to(
-                            ReservationResource::getUrl('edit', ['record' => $existing])
+                            \App\Filament\Resources\Reservations\ReservationResource::getUrl('edit', ['record' => $existing])
                         );
                     }
 
-                    // Tidak ada draft → buat baru
-                    $record = DB::transaction(function () use ($user, $hotelId) {
-                        return Reservation::create([
-                            'reservation_no'   => Reservation::generateReservationNo($hotelId, 'RESERVATION'),
-                            'hotel_id'         => $hotelId,
-
-                            // default inputan awal
-                            'option'           => 'WALKIN',
-                            'method'           => 'PERSONAL',
-                            'status'           => 'CONFIRM',
-                            'deposit_type'     => 'DP',
-                            'deposit'          => 0,
-                            'reserved_title'   => 'MR',
-                            'reserved_by'      => $user->name ?? 'Guest',
-                            'entry_date'       => now(),
-                            'expected_arrival' => now()->setTime(13, 0),
-
-                            'created_by'       => $user->id ?? null,
-                            'updated_by'       => $user->id ?? null,
+                    // Tidak ada draft dgn guest_id null → buat BARU
+                    $record = \Illuminate\Support\Facades\DB::transaction(function () use ($user, $hotelId) {
+                        return \App\Models\Reservation::create([
+                            'reservation_no'     => \App\Models\Reservation::generateReservationNo($hotelId, 'RESERVATION'),
+                            'hotel_id'           => $hotelId,
+                            'option_reservation' => 'reservation', // lowercase
+                            'option'             => 'WALKIN',
+                            'method'             => 'PERSONAL',
+                            'status'             => 'CONFIRM',
+                            'deposit_type'       => 'DP',
+                            'deposit'            => 0,
+                            'reserved_title'     => 'MR',
+                            'reserved_by'        => $user->name ?? 'Guest',
+                            'entry_date'         => now(),
+                            'expected_arrival'   => now()->setTime(13, 0),
+                            'created_by'         => $user->id ?? null,
+                            'updated_by'         => $user->id ?? null,
                         ]);
                     });
 
-                    Notification::make()
+                    \Filament\Notifications\Notification::make()
                         ->title('Reservation created')
                         ->body("No: {$record->reservation_no}")
-                        ->success()
-                        ->send();
+                        ->success()->send();
 
                     return redirect()->to(
-                        ReservationResource::getUrl('edit', ['record' => $record])
+                        \App\Filament\Resources\Reservations\ReservationResource::getUrl('edit', ['record' => $record])
                     );
                 }),
 
-            // === Walk-in (langsung ke halaman WalkinForm) ===
             Action::make('newWalkin')
                 ->label('New Walk-in')
                 ->icon('heroicon-m-plus')
@@ -100,18 +95,31 @@ class ListReservations extends ListRecords
                     $user    = Auth::user();
                     $hotelId = (int) (session('active_hotel_id') ?? ($user->hotel_id ?? 1));
 
-                    // Cari draft walk-in kosong milik user hari ini
+                    Log::info('[Walkin Button] CLICK', [
+                        'user_id'  => $user?->id,
+                        'hotel_id' => $hotelId,
+                        'today'    => now()->toDateString(),
+                    ]);
+
+                    // 1) COBA LANJUTKAN DRAFT walk-in (guest_id NULL)
                     $existing = Reservation::query()
                         ->where('hotel_id', $hotelId)
-                        ->where('option_reservation', 'WALKIN')
-                        ->whereNull('guest_id')
-                        ->whereNull('group_id')
+                        ->where('option_reservation', 'walkin')     // ⬅️ lowercase sesuai migration
+                        ->whereNull('guest_id')                     // ⬅️ hanya draft (belum pilih tamu)
                         ->whereNull('checkin_date')
                         ->whereNull('checkout_date')
                         ->whereDate('created_at', today())
                         ->where('created_by', $user->id)
+                        // ->whereHas('reservationGuests')          // opsional: aktifkan jika mau pastikan punya RG
                         ->latest('id')
                         ->first();
+
+                    Log::info('[Walkin Button] SEARCH DRAFT', [
+                        'found'         => (bool) $existing,
+                        'existing_id'   => $existing?->id,
+                        'existing_no'   => $existing?->reservation_no,
+                        'guest_id_null' => $existing?->guest_id === null,
+                    ]);
 
                     if ($existing) {
                         Notification::make()
@@ -120,37 +128,43 @@ class ListReservations extends ListRecords
                             ->info()
                             ->send();
 
+                        Log::info('[Walkin Button] CONTINUE EXISTING', [
+                            'reservation_id' => $existing->id,
+                            'reservation_no' => $existing->reservation_no,
+                        ]);
+
                         return redirect()->to(
                             WalkinResource::getUrl('edit', ['record' => $existing])
                         );
                     }
 
-                    // Tidak ada draft → buat baru + 1 ReservationGuest default
+                    // 2) TIDAK ADA DRAFT → BUAT BARU
                     $record = DB::transaction(function () use ($user, $hotelId) {
+                        $no = Reservation::generateReservationNo($hotelId, 'WALKIN');
+
+                        // Guard opsional: hindari nomor dobel kalau user klik cepat dua kali
+                        if (Reservation::where('reservation_no', $no)->exists()) {
+                            $no = Reservation::generateReservationNo($hotelId, 'WALKIN');
+                        }
+
                         $reservation = Reservation::create([
                             'hotel_id'           => $hotelId,
-                            'reservation_no'     => Reservation::generateReservationNo($hotelId, 'WALKIN'),
-                            'option_reservation' => 'WALKIN',
-
-                            // Default awal — sejajar dengan ReservationForm
+                            'reservation_no'     => $no,
+                            'option_reservation' => 'walkin',     // ⬅️ lowercase
                             'option'             => 'WALKIN',
                             'method'             => 'PERSONAL',
                             'status'             => 'CONFIRM',
                             'deposit_room'       => 0,
                             'deposit_card'       => 0,
                             'entry_date'         => now(),
-
-                            // default arrival: hari ini 13:00
                             'expected_arrival'   => now()->setTime(13, 0),
-
                             'created_by'         => $user->id ?? null,
                         ]);
 
-                        // ⬇️ Buat 1 draft ReservationGuest ter-link ke reservation
+                        // Buat 1 RG default (guest_id masih null = tetap dianggap draft)
                         ReservationGuest::create([
                             'hotel_id'         => $hotelId,
                             'reservation_id'   => $reservation->id,
-                            // guest_id dibiarkan null dulu; akan dipilih di form
                             'pov'              => 'BUSINESS',
                             'person'           => 'PERSONAL ACCOUNT',
                             'charge_to'        => 'PERSONAL ACCOUNT',
@@ -158,8 +172,14 @@ class ListReservations extends ListRecords
                             'male'             => 1,
                             'female'           => 0,
                             'children'         => 0,
-                            // jumlah_orang akan otomatis dihitung via mutator (male+female+children)
                             'expected_checkin' => $reservation->expected_arrival,
+                        ]);
+
+                        Log::info('[Walkin Button] CREATED NEW', [
+                            'reservation_id' => $reservation->id,
+                            'reservation_no' => $reservation->reservation_no,
+                            'hotel_id'       => $hotelId,
+                            'created_by'     => $user?->id,
                         ]);
 
                         return $reservation;
@@ -175,6 +195,7 @@ class ListReservations extends ListRecords
                         WalkinResource::getUrl('edit', ['record' => $record])
                     );
                 }),
+
         ];
     }
 }

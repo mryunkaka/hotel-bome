@@ -3,9 +3,9 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\Guest;
+use Illuminate\Support\Facades\DB;
 use Faker\Factory as Faker;
-use Illuminate\Support\Str;
+use App\Enums\Salutation;
 
 class GuestSeeder extends Seeder
 {
@@ -13,89 +13,60 @@ class GuestSeeder extends Seeder
     {
         $faker = Faker::create('id_ID');
 
-        $hotelId = 1;
+        $hotelIds = DB::table('hotels')->pluck('id');
+        if ($hotelIds->isEmpty()) {
+            $hotelIds = collect([1]);
+        }
 
-        // helper nomor telepon Indonesia (E.164): +628xxxxxxxxxx
-        $makePhone = function () {
-            // 8–11 digit setelah 08 → total 10–13 digit setelah +62
-            $len = random_int(9, 11);
-            $digits = '';
-            for ($i = 0; $i < $len; $i++) {
-                $digits .= random_int(0, 9);
+        // Backing values enum Salutation, mis: ['MR','MRS','MS','BPK','IBU', ...]
+        $salutationValues = array_map(fn($c) => $c->value, Salutation::cases());
+
+        $idTypes    = ['ID', 'PASSPORT', 'DRIVER_LICENSE', 'OTHER'];
+        $guestTypes = ['DOMESTIC', 'INTERNATIONAL']; // ⬅️ disesuaikan dgn Select pv_guest_type
+
+        foreach ($hotelIds as $hid) {
+            $faker->unique(true); // reset scope unique per hotel
+
+            for ($i = 1; $i <= 50; $i++) {
+                $name  = $faker->name();
+                $email = strtolower(str_replace(' ', '.', $name)) . "+h{$hid}@example.com";
+
+                DB::table('guests')->insert([
+                    'hotel_id'      => $hid,
+                    'name'          => $name,
+
+                    // gunakan backing value enum; 80% berisi, 20% null
+                    'salutation'    => $faker->optional(0.8)->randomElement($salutationValues),
+
+                    // ⬅️ hanya DOMESTIC / INTERNATIONAL
+                    'guest_type'    => $faker->randomElement($guestTypes),
+
+                    'id_type'       => $faker->randomElement($idTypes),
+
+                    'birth_place'   => $faker->city,
+                    'birth_date'    => $faker->dateTimeBetween('-60 years', '-20 years')->format('Y-m-d'),
+                    'issued_place'  => $faker->city,
+                    'issued_date'   => $faker->dateTimeBetween('-10 years', 'now')->format('Y-m-d'),
+
+                    'email'         => $email,
+                    'phone'         => '08' . $faker->numerify('##########'),
+                    'city'          => $faker->city,
+                    'nationality'   => 'Indonesia',
+                    'profession'    => $faker->jobTitle,
+                    'address'       => $faker->address,
+
+                    // unik per hotel_id + id_card + deleted_at
+                    'id_card'       => $faker->unique()->numerify('3273############'),
+                    'id_card_file'  => null,
+
+                    'father'        => $faker->firstNameMale . ' ' . $faker->lastName,
+                    'mother'        => $faker->firstNameFemale . ' ' . $faker->lastName,
+                    'spouse'        => $faker->optional()->name(),
+
+                    'created_at'    => now(),
+                    'updated_at'    => now(),
+                ]);
             }
-            // hindari mulai dengan 0 setelah +62
-            if ($digits !== '' && $digits[0] === '0') {
-                $digits[0] = (string) random_int(1, 9);
-            }
-            return '+62' . $digits;
-        };
-
-        // helper ID number (KTP/SIM/Passport-like)
-        $makeIdNumber = function (string $type) {
-            return match ($type) {
-                'Passport'       => strtoupper(Str::random(2)) . str_pad((string) random_int(0, 9999999), 7, '0', STR_PAD_LEFT),
-                'Driver License' => str_pad((string) random_int(0, 999999999999), 12, '0', STR_PAD_LEFT),
-                default          => str_pad((string) random_int(0, 9999999999999), 13, '0', STR_PAD_LEFT), // National ID
-            };
-        };
-
-        for ($i = 0; $i < 20; $i++) {
-            // salutation + gendered name
-            $salutation = $faker->randomElement(['MR', 'MRS', 'MISS']);
-            $gender     = $salutation === 'MR' ? 'male' : 'female';
-            $fullName   = $faker->name($gender);
-
-            // guest type & nationality
-            $guestType   = $faker->randomElement(['DOMESTIC', 'INTERNATIONAL']);
-            $nationality = $guestType === 'DOMESTIC'
-                ? 'Indonesia'
-                : $faker->randomElement(['Malaysia', 'Singapore', 'Japan', 'Australia', 'Thailand', 'Philippines', 'Vietnam']);
-
-            // id type & number
-            $idTypeOptions = ['ID', 'PASSPORT', 'DRIVER_LICENSE', 'OTHER'];
-            $idType        = $faker->randomElement($idTypeOptions);
-            $idNumber      = $makeIdNumber($idType);
-
-            // tanggal lahir & terbit (issued_date >= birth_date + 17 tahun)
-            $birthDateYear  = (int) now()->subYears(random_int(18, 70))->format('Y');
-            $birthDate      = $faker->dateTimeBetween("{$birthDateYear}-01-01", "{$birthDateYear}-12-31");
-            $issuedMin      = (clone $birthDate)->modify('+17 years');
-            // guard: kalau issuedMin di masa depan, mundurkan ke -1 tahun dari sekarang
-            if ($issuedMin > new \DateTime()) {
-                $issuedMin = (new \DateTime())->modify('-1 year');
-            }
-            $issuedDate     = $faker->dateTimeBetween($issuedMin, 'now');
-
-            // file id (fake path yang valid, bukan null)
-            $idCardFile = 'uploads/ids/' . Str::slug($fullName) . '-' . Str::random(6) . '.jpg';
-
-            Guest::create([
-                'hotel_id'     => $hotelId,
-
-                // identitas dasar
-                'salutation'   => $salutation,
-                'name'         => $fullName,
-                'guest_type'   => $guestType,
-                'nationality'  => $nationality,
-
-                // kontak & alamat
-                'address'      => $faker->streetAddress . ', ' . $faker->streetName,
-                'city'         => $faker->city,
-                'profession'   => $faker->jobTitle,
-                'email'        => $faker->unique()->safeEmail(),
-                'phone'        => $makePhone(),
-
-                // identitas resmi
-                'id_type'      => $idType,
-                'id_card'      => $idNumber,
-                'id_card_file' => $idCardFile,
-
-                // tempat & tanggal
-                'birth_place'  => $faker->city,
-                'birth_date'   => $birthDate->format('Y-m-d'),
-                'issued_place' => $faker->city,
-                'issued_date'  => $issuedDate->format('Y-m-d'),
-            ]);
         }
     }
 }

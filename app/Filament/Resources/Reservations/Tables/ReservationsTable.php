@@ -69,7 +69,7 @@ class ReservationsTable
 
                 TextColumn::make('expected_arrival')->label('Arrival')->searchable(),
                 TextColumn::make('expected_departure')->label('Departure')->searchable(),
-                TextColumn::make('deposit')->numeric()->searchable(),
+                TextColumn::make('deposit_room')->numeric()->searchable(),
                 TextColumn::make('creator.name')->label('Entry By')->default('-')->searchable()->sortable(),
                 TextColumn::make('created_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('updated_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),

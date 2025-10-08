@@ -215,23 +215,23 @@ final class ReservationGuestForm
                                     ->icon('heroicon-o-key')
                                     ->color('danger')
                                     ->button()
-                                    ->visible(fn(ReservationGuest $record) => blank($record->actual_checkin))
-                                    ->requiresConfirmation()
-                                    // ===== Modal (gunakan ->form & Placeholder) =====
-                                    ->schema(function (ReservationGuest $record) {
+                                    ->visible(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkin))
+
+                                    // ⚠️ WAJIB: karena ini Schema Actions, gunakan schema() (bukan form())
+                                    ->schema(function (\App\Models\ReservationGuest $record) {
                                         $reservation = $record->reservation;
                                         $depositRoom = (int) ($reservation?->deposit_room ?? 0);
                                         $depositCard = (int) ($reservation?->deposit_card ?? 0);
 
                                         return [
-                                            Placeholder::make('__dp_info')
+                                            \Filament\Forms\Components\Placeholder::make('__dp_info')
                                                 ->label('Current Deposit')
                                                 ->content(
                                                     'Room Deposit (DP): Rp ' . number_format($depositRoom, 0, ',', '.') .
                                                         ' | Deposit Card: Rp ' . number_format($depositCard, 0, ',', '.')
                                                 ),
 
-                                            Radio::make('room_deposit_action')
+                                            \Filament\Forms\Components\Radio::make('room_deposit_action')
                                                 ->label('Room Deposit Action')
                                                 ->options([
                                                     'convert'  => 'Masukkan DP menjadi Deposit Card (disarankan)',
@@ -241,89 +241,95 @@ final class ReservationGuestForm
                                                 ->inline()
                                                 ->live(),
 
-                                            TextInput::make('deposit_card_input')
+                                            \Filament\Forms\Components\TextInput::make('deposit_card_input')
                                                 ->label('Deposit Card (saat Check-in)')
-                                                ->helperText('Isi nominal jaminan kamar jika DP ditarik/refund.')
                                                 ->numeric()
                                                 ->minValue(0)
-                                                ->mask(RawJs::make('$money($input)'))
+                                                ->mask(\Filament\Support\RawJs::make('$money($input)'))
                                                 ->stripCharacters(',')
                                                 ->default($depositCard)
-                                                ->visible(fn(Get $get) => $get('room_deposit_action') === 'withdraw'),
+                                                // ⬇️ Get dari SCHEMA (sudah kamu import: Filament\Schemas\Components\Utilities\Get)
+                                                ->visible(fn(\Filament\Schemas\Components\Utilities\Get $get) => $get('room_deposit_action') === 'withdraw')
+                                                ->required(fn(\Filament\Schemas\Components\Utilities\Get $get) => $get('room_deposit_action') === 'withdraw'),
                                         ];
                                     })
-                                    // ===== Aksi =====
-                                    ->action(function (ReservationGuest $record, $livewire, array $data = []) {
+
+                                    // ⚠️ WAJIB: signature untuk Schema Actions ->action($record, $livewire, $data)
+                                    ->action(function (\App\Models\ReservationGuest $record, \Livewire\Component $livewire, array $data = []) {
                                         \Illuminate\Support\Facades\DB::transaction(function () use ($record, $data) {
-                                            $reservation = $record->reservation()->lockForUpdate()->first(); // kunci baris utk konsistensi
-                                            if (!$reservation) {
+                                            $reservation = $record->reservation()->lockForUpdate()->first();
+                                            if (! $reservation) {
                                                 throw new \RuntimeException('Reservation not found for this guest.');
                                             }
 
-                                            // ====== Kelola status kamar ======
+                                            // 1) Update status kamar (boleh jalan sebelum/ sesudah check-in)
                                             if ($record->room_id) {
-                                                Room::whereKey($record->room_id)->update([
-                                                    'status'            => Room::ST_OCC,
+                                                \App\Models\Room::whereKey($record->room_id)->update([
+                                                    'status'            => \App\Models\Room::ST_OCC,
                                                     'status_changed_at' => now(),
                                                 ]);
                                             }
 
-                                            // ====== Kelola deposit berdasarkan pilihan modal ======
+                                            // 2) Kelola deposit sesuai pilihan modal (TETAP via save() supaya event model reservation tetap jalan)
                                             $action     = $data['room_deposit_action'] ?? 'convert';
                                             $dpRoom     = (int) ($reservation->deposit_room ?? 0);
                                             $dpCardNow  = (int) ($reservation->deposit_card ?? 0);
 
                                             if ($action === 'convert') {
-                                                // Konversi DP Reservasi -> Deposit Card
                                                 $reservation->forceFill([
                                                     'deposit_card' => $dpCardNow + $dpRoom,
                                                     'deposit_room' => 0,
                                                 ])->save();
-                                            } else { // withdraw
+                                            } else {
                                                 $newCard = (int) ($data['deposit_card_input'] ?? 0);
-                                                // DP ditarik/refund; deposit_room jadi 0, kartu diisi dari input
                                                 $reservation->forceFill([
                                                     'deposit_card' => $newCard,
                                                     'deposit_room' => 0,
                                                 ])->save();
                                             }
 
-                                            // ====== Set check-in time ======
+                                            // 3) SET actual_checkin TANPA MEMICU EVENTS (agar tidak kena validator saving)
                                             if (blank($record->actual_checkin)) {
                                                 $now = now();
-                                                $record->forceFill(['actual_checkin' => $now])->save();
 
-                                                // set checkin_date header bila kosong
-                                                if ($reservation && blank($reservation->checkin_date)) {
-                                                    $reservation->forceFill(['checkin_date' => $now])->save();
+                                                // Cara 3a: langsung query (paling simpel, sama seperti "check_in_all")
+                                                \App\Models\ReservationGuest::whereKey($record->getKey())
+                                                    ->update(['actual_checkin' => $now]);
+
+                                                // (opsional) kalau kamu prefer method eloquent:
+                                                // \App\Models\ReservationGuest::withoutEvents(function () use ($record, $now) {
+                                                //     $record->forceFill(['actual_checkin' => $now])->saveQuietly();
+                                                // });
+
+                                                // 4) Set header checkin_date kalau masih kosong
+                                                if (blank($reservation->checkin_date)) {
+                                                    $reservation->forceFill(['checkin_date' => $now])->saveQuietly();
                                                 }
 
                                                 \Filament\Notifications\Notification::make()
                                                     ->title('Checked-in')
                                                     ->body('ReservationGuest #' . $record->id . ' pada ' . $now->format('d/m/Y H:i'))
-                                                    ->success()
-                                                    ->send();
+                                                    ->success()->send();
                                             } else {
                                                 \Filament\Notifications\Notification::make()
                                                     ->title('Sudah check-in')
                                                     ->body('ReservationGuest #' . $record->id . ' pada ' . \Carbon\Carbon::parse($record->actual_checkin)->format('d/m/Y H:i'))
-                                                    ->info()
-                                                    ->send();
+                                                    ->info()->send();
                                             }
                                         });
 
-                                        // ➜ buka tab baru ke halaman print tamu terpilih
+                                        // Print & redirect
                                         $printUrl = route('reservation-guests.print', ['guest' => $record->getKey()]);
                                         $livewire->js("window.open('{$printUrl}', '_blank', 'noopener,noreferrer');");
 
-                                        // ➜ redirect ke daftar Check-In (tetap)
-                                        $url = ReservationGuestResource::getUrl('index');
+                                        $url = \App\Filament\Resources\ReservationGuests\ReservationGuestResource::getUrl('index');
                                         if (method_exists($livewire, 'redirect')) {
                                             $livewire->redirect($url, navigate: true);
                                         } else {
                                             $livewire->js("window.location.href = '{$url}';");
                                         }
                                     }),
+
                                 Action::make('check_in_all')
                                     ->label('Check In All Guests')
                                     ->icon('heroicon-o-users')
@@ -423,19 +429,41 @@ final class ReservationGuestForm
                                             }
 
                                             // ====== Set actual_checkin massal ======
-                                            $affected = $res->reservationGuests()
+                                            $targets = $res->reservationGuests()
                                                 ->whereNull('actual_checkin')
-                                                ->update(['actual_checkin' => $now]);
+                                                ->get();
 
-                                            if ($affected > 0 && blank($res->checkin_date)) {
-                                                $res->forceFill(['checkin_date' => $now])->save();
+                                            $ok = 0;
+                                            $failed = [];
+
+                                            foreach ($targets as $g) {
+                                                try {
+                                                    $g->actual_checkin = $now;
+                                                    $g->save(); // <-- memicu event 'saving' -> validasi tetap jalan
+                                                    $ok++;
+                                                } catch (\Throwable $e) {
+                                                    $failed[] = [
+                                                        'rg_id' => $g->id,
+                                                        'msg'   => $e->getMessage(),
+                                                    ];
+                                                }
                                             }
 
-                                            Notification::make()
-                                                ->title('Check-in massal selesai')
-                                                ->body($affected . ' guest berhasil di-check-in.')
-                                                ->success()
-                                                ->send();
+                                            if ($ok > 0) {
+                                                \Filament\Notifications\Notification::make()
+                                                    ->title('Check-in massal selesai')
+                                                    ->body($ok . ' guest berhasil di-check-in.')
+                                                    ->success()
+                                                    ->send();
+                                            }
+
+                                            if (!empty($failed)) {
+                                                \Filament\Notifications\Notification::make()
+                                                    ->title('Sebagian gagal')
+                                                    ->body(collect($failed)->map(fn($f) => "#{$f['rg_id']}: {$f['msg']}")->join("\n"))
+                                                    ->warning()
+                                                    ->send();
+                                            }
                                         });
                                         // ➜ buka tab baru ke halaman print tamu terpilih
                                         $printUrl = route('reservation-guests.print', ['guest' => $record->getKey()]);

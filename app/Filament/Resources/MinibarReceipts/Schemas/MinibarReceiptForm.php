@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\MinibarReceipts\Schemas;
 
+use App\Models\Bank;
 use App\Models\MinibarItem;
 use Filament\Schemas\Schema;
 use App\Models\ReservationGuest;
@@ -54,7 +55,21 @@ class MinibarReceiptForm
                             ])
                             ->default('cash')
                             ->required()
+                            ->live() // <— penting: agar visibilitas bank_id ikut berubah
                             ->columnSpan(6),
+
+                        Select::make('bank_id')
+                            ->label('Bank Account')
+                            ->options(fn() => Bank::query()
+                                ->where('hotel_id', Session::get('active_hotel_id'))
+                                ->orderBy('name')
+                                ->pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->native(false)
+                            ->visible(fn(Get $get) => in_array($get('method'), ['transfer', 'edc'], true))
+                            ->required(fn(Get $get) => in_array($get('method'), ['transfer', 'edc'], true))
+                            ->columnSpan(12),
 
                         Select::make('reservation_guest_id')
                             ->label('Guest')

@@ -13,6 +13,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Validation\ValidationException;
 
+// ⬇️ Tambahkan ini
+use App\Models\AccountLedger;
+use App\Models\BankLedger;
+
 class CreateMinibarReceipt extends CreateRecord
 {
     protected static string $resource = \App\Filament\Resources\MinibarReceipts\MinibarReceiptResource::class;
@@ -45,7 +49,7 @@ class CreateMinibarReceipt extends CreateRecord
         $data['total_amount']    = 0;
         $data['total_cogs']      = 0;
 
-        unset($data['notes'], $data['method']);
+        unset($data['notes'], $data['method']); // ← BIARKAN, kita baca method dari $this->data di afterCreate()
 
         return $data;
     }
@@ -71,7 +75,7 @@ class CreateMinibarReceipt extends CreateRecord
                 $receipt = MinibarReceipt::create($data);
             }
 
-            // normalisasi & insert items (manual – kita tidak pakai ->relationship)
+            // normalisasi & insert items
             $toCreate = collect($formItems)
                 ->filter(fn($row) => !empty($row['item_id']) && (int)($row['quantity'] ?? 0) > 0)
                 ->map(function ($row) {
@@ -115,15 +119,78 @@ class CreateMinibarReceipt extends CreateRecord
                 'total_cogs'      => $totalCogs,
             ])->save();
 
-            // siapkan URL print & dispatch event untuk buka tab baru
+            // siapkan URL print & dispatch event
             $this->printUrl = route('minibar-receipts.print', ['receipt' => $receipt->getKey()]);
-            // Livewire v3: event ke browser
             $this->dispatch('mbr-print', url: $this->printUrl);
 
-            // kosongkan state repeater agar aman
+            // kosongkan state repeater
             $this->data['items'] = [];
 
             return $receipt;
+        });
+    }
+
+    // ⬇️ Tambahkan hook ini — tidak mengubah kode di atas
+    protected function afterCreate(): void
+    {
+        $receipt = $this->record;
+
+        // Baca pilihan form asli (karena 'method' di-unset saat create)
+        $method = strtolower((string) ($this->data['method'] ?? 'cash'));
+        $bankId = (int) ($this->data['bank_id'] ?? 0);
+
+        // Abaikan ledger kalau charge to room
+        if ($method === 'charge_to_room') {
+            return;
+        }
+
+        $amount = (int) ($receipt->total_amount ?? 0);
+        if ($amount <= 0) {
+            return;
+        }
+
+        $hotelId = (int) $receipt->hotel_id;
+        $date    = optional($receipt->issued_at)->toDateString() ?? now()->toDateString();
+        $desc    = 'Minibar Receipt #' . $receipt->id;
+        $userId  = Auth::id();
+
+        DB::transaction(function () use ($method, $bankId, $amount, $hotelId, $date, $desc, $userId, $receipt) {
+            if ($method === 'cash') {
+                AccountLedger::create([
+                    'hotel_id'        => $hotelId,
+                    'ledger_type'     => 'minibar',
+                    'reference_table' => 'minibar_receipts',
+                    'reference_id'    => (int) $receipt->id,
+                    'account_code'    => 'CASH_ON_HAND',
+                    'method'          => 'cash',
+                    'debit'           => $amount,
+                    'credit'          => 0,
+                    'date'            => $date,
+                    'description'     => $desc,
+                    'is_posted'       => true,
+                    'posted_at'       => now(),
+                    'posted_by'       => $userId,
+                ]);
+                return;
+            }
+
+            if (in_array($method, ['transfer', 'edc'], true) && $bankId > 0) {
+                BankLedger::create([
+                    'hotel_id'        => $hotelId,
+                    'bank_id'         => $bankId,
+                    'deposit'         => $amount,
+                    'withdraw'        => 0,
+                    'date'            => $date,
+                    'description'     => $desc,
+                    'method'          => $method === 'edc' ? 'edc' : 'transfer',
+                    'ledger_type'     => 'minibar',
+                    'reference_table' => 'minibar_receipts',
+                    'reference_id'    => (int) $receipt->id,
+                    'is_posted'       => true,
+                    'posted_at'       => now(),
+                    'posted_by'       => $userId,
+                ]);
+            }
         });
     }
 }

@@ -3,12 +3,7 @@
 namespace App\Filament\Resources\ReservationGuestCheckOuts\Tables;
 
 use Filament\Tables\Table;
-use Filament\Actions\Action;
-use App\Models\ReservationGuest;
-use App\Support\ReservationMath;
 use Filament\Actions\EditAction;
-use Filament\Tables\Filters\Filter;
-use Illuminate\Support\Facades\Auth;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Tables\Columns\TextColumn;
@@ -26,12 +21,12 @@ class ReservationGuestCheckOutsTable
                     ->sortable(),
 
                 TextColumn::make('actual_checkin')
-                    ->label('Actual Checkin')
+                    ->label('Actual Check-in')
                     ->dateTime('d/m/Y H:i')
                     ->sortable(),
 
                 TextColumn::make('actual_checkout')
-                    ->label('Expected Checkout')
+                    ->label('Actual Check-out')
                     ->dateTime('d/m/Y H:i')
                     ->sortable(),
 
@@ -56,12 +51,18 @@ class ReservationGuestCheckOutsTable
                     ->sortable(),
             ])
             ->filters([
-                //
+                // tambahkan filter lain jika perlu
             ])
             ->recordActions([
                 EditAction::make(),
             ])
-            ->modifyQueryUsing(fn(Builder $query) => $query->latest('created_at')->whereNotNull('actual_checkin'))
+            // hanya tampilkan yang SUDAH check-in DAN BELUM check-out
+            ->modifyQueryUsing(
+                fn(Builder $query) =>
+                $query->whereNotNull('actual_checkin')
+                    ->whereNull('actual_checkout')
+                    ->latest('created_at')
+            )
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),

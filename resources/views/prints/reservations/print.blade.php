@@ -141,23 +141,56 @@
             margin: 8px 0;
         }
 
+        /* ==== Items: paksa fixed layout dan potong angka saja ==== */
         table.items {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 10px;
+        width: 100% !important;
+        table-layout: fixed !important;
+        border-collapse: collapse;
+        font-size: 9px;
+        }
+
+        .items th, .items td {
+        padding: 4px 3px;
+        box-sizing: border-box;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        }
+
+        /* Angka rata kanan rapih */
+        .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* Biarkan teks panjang BISA WRAP di kolom Category & Guest */
+        .items th:nth-child(2), .items td:nth-child(2),
+        .items th:nth-child(9), .items td:nth-child(9) {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        }
+
+        /* Posisi kolom lain */
+        .items th:nth-child(1), .items td:nth-child(1)   { text-align: left;  } /* ROOM */
+        .items th:nth-child(3), .items td:nth-child(3),
+        .items th:nth-child(4), .items td:nth-child(4),
+        .items th:nth-child(5), .items td:nth-child(5),
+        .items th:nth-child(6), .items td:nth-child(6),
+        .items th:nth-child(7), .items td:nth-child(7)   { text-align: right; } /* angka */
+        .items th:nth-child(8), .items td:nth-child(8)   { text-align: center;} /* PS  */
+        .items th:nth-child(10), .items td:nth-child(10),
+        .items th:nth-child(11), .items td:nth-child(11){
+        white-space: normal !important; /* boleh turun baris */
+        text-align: center;
         }
 
         .items thead th {
-            border-top: 1.5px solid #1F2937;
-            border-bottom: 1px solid #1F2937;
-            padding: 6px;
-            text-align: left;
+        border-top: 1.5px solid #1F2937;
+        border-bottom: 1px solid #1F2937;
         }
 
-        .items td {
-            border-bottom: 1px solid #D1D5DB;
-            padding: 6px;
-        }
+        /* ==== ARR/DEPT bisa wrap + gaya 2-baris ==== */
+        .dtwrap { line-height: 1.15; }
+        .dtwrap .date { display:block; }
+        .dtwrap .time { display:block; font-size: 85%; color:#374151; }
 
         .center {
             text-align: center;
@@ -298,27 +331,62 @@
 
     {{-- ===== TOP INFO (2 kolom) ===== --}}
     <table class="kv-table">
+        @php
+            // hitung total PS
+            $totalPs = 0;
+            if (!empty($rows) && is_iterable($rows)) {
+                foreach ($rows as $rr) {
+                    $totalPs += (int)($rr['ps'] ?? 1);
+                }
+            }
+
+            // hitung nights dari expected arrival/departure
+            $nights = '-';
+            try {
+                $arr = $expected_arrival ?? ($bookingDates['arrival'] ?? null);
+                $dep = $expected_departure ?? ($bookingDates['departure'] ?? null);
+                if ($arr && $dep) {
+                    $a = \Carbon\Carbon::parse($arr)->startOfDay();
+                    $d = \Carbon\Carbon::parse($dep)->startOfDay();
+                    $n = max(1, $a->diffInDays($d));
+                    $nights = (string)$n;
+                }
+            } catch (\Throwable $e) {
+                $nights = '-';
+            }
+        @endphp
+
         <tr>
-            <td class="kv-td" style="width:70%;">
+            {{-- === KIRI (ditambah agar seimbang) === --}}
+            <td class="kv-td" style="width:80%;">
                 <div><span class="k">Metode</span><span class="v">:
                         {{ ucfirst($payment['method'] ?? ($method ?? '-')) }}</span></div>
-                <div><span class="k">Status</span><span class="v">: {{ $status ?? 'CONFIRM' }}</span></div>
-                <div><span class="k">Reserved By</span><span class="v">: {{ $companyName ?: '-' }}</span>
-                </div>
+                <div><span class="k">Status</span><span class="v">:
+                        {{ $status ?? 'CONFIRM' }}</span></div>
+                <div><span class="k">Reserved By</span><span class="v">:
+                        {{ $companyName ?: '-' }}</span></div>
+                <div><span class="k">Hotel</span><span class="v">:
+                        {{ $hotel?->name ?? '-' }}</span></div>
+                <div><span class="k">Nights</span><span class="v">:
+                        {{ $nights }}</span></div>
+                <div><span class="k">Total Guests (PS)</span><span class="v">:
+                        {{ $totalPs }}</span></div>
             </td>
-            <td class="kv-td" style="width:30%">
+
+            {{-- === KANAN (tetap seperti sebelumnya) === --}}
+            <td class="kv-td" style="width:30%;">
                 <div><span class="k">Expected Arrival</span><span class="v">:
                         {{ \App\Support\ReservationView::fmtDate($expected_arrival ?? ($bookingDates['arrival'] ?? null), true) }}</span>
                 </div>
                 <div><span class="k">Expected Departure</span><span class="v">:
                         {{ \App\Support\ReservationView::fmtDate($expected_departure ?? ($bookingDates['departure'] ?? null), true) }}</span>
                 </div>
-                <div>
-                    <span class="k">Deposits</span>
-                    <span class="v">
-                        {{ \App\Support\ReservationView::fmtMoney($deposit_room ?? 0) }}
-                    </span>
-                </div>
+                <div><span class="k">Deposits Room</span><span class="v">:
+                        {{ \App\Support\ReservationView::fmtMoney($deposit_room ?? 0) }}</span></div>
+                <div><span class="k">Deposits Card</span><span class="v">:
+                        {{ \App\Support\ReservationView::fmtMoney($deposit_card ?? 0) }}</span></div>
+                <div><span class="k">Deposit Total</span><span class="v">:
+                        {{ \App\Support\ReservationView::fmtMoney(($deposit_room ?? 0) + ($deposit_card ?? 0)) }}</span></div>
             </td>
         </tr>
     </table>
@@ -327,42 +395,78 @@
 
     {{-- ===== ITEMS TABLE (ROOM LIST) ===== --}}
     <table class="items">
+        <colgroup>
+            <col style="width:12mm">  <!-- ROOM -->
+            <col style="width:22mm">  <!-- CAT  (dibuat agak lebar & bisa wrap) -->
+            <col style="width:18mm">  <!-- BASE -->
+            <col style="width:12mm">  <!-- DISC% -->
+            <col style="width:20mm">  <!-- AFTER -->
+            <col style="width:16mm">  <!-- DEP R -->
+            <col style="width:16mm">  <!-- DEP C -->
+            <col style="width:8mm">   <!-- PS -->
+            <col style="width:34mm">  <!-- GUEST (paling lebar & bisa wrap) -->
+            <col style="width:18mm">  <!-- ARR -->
+            <col style="width:18mm">  <!-- DEPT -->
+        </colgroup>
+        <!-- thead + tbody tetap -->
         <thead>
             <tr>
                 <th class="narrow">ROOM</th>
-                <th>CATEGORY</th>
-                <th class="right">RATE</th>
+                <th>CAT</th>
+                <th class="right">BASE</th>
+                <th class="right">DISC%</th>
+                <th class="right">AFTER</th>
+                <th class="right">DEP&nbsp;R</th>
+                <th class="right">DEP&nbsp;C</th>
                 <th class="center narrow">PS</th>
-                <th>GUEST NAME</th>
-                <th class="center narrow">EXP ARR</th>
-                <th class="center narrow">EXP DEPT</th>
+                <th>GUEST</th>
+                <th class="center narrow">ARR</th>
+                <th class="center narrow">DEPT</th>
             </tr>
         </thead>
         <tbody>
             @forelse($rows as $r)
                 <tr>
+                    @php
+                        // Ambil base rate dan diskon (pakai field yang sudah ada di rows/enrich)
+                        $baseRate = (float) ($r['room_rate'] ?? ($r['rate'] ?? ($r['unit_price'] ?? 0)));
+                        $discPct  = (float) ($r['discount_percent'] ?? ($r['discount'] ?? 0));
+                        $discPct  = max(0, min(100, $discPct));
+                        $rateAfter = max(0, $baseRate * (1 - ($discPct / 100)));
+
+                        // Deposit per-guest (dari enrichRows)
+                        $depRoom = (float) ($r['deposit_room'] ?? 0);
+                        $depCard = (float) ($r['deposit_card'] ?? 0);
+                    @endphp
                     <td>{{ $r['room_no'] ?? '-' }}</td>
                     <td>{{ $r['category'] ?? '-' }}</td>
-                    {{-- <td class="right">{{ $fmtMoney($calcFinalRate($r)) }}</td> --}}
-                    {{-- <td class="right">{{ $fmtMoney($calcFinalRate($r)) }}</td> --}}
-                    <td class="right">
-                        {{ \App\Support\ReservationView::fmtMoney(
-                            ReservationMath::calcFinalRate($r, [
-                                'tax_lookup' => $taxLookup,
-                                'extra_bed_price' => 100000,
-                                'service_taxable' => false,
-                            ]),
-                        ) }}
-                    </td>
+
+                    <td class="num">{{ \App\Support\ReservationView::fmtMoney($baseRate) }}</td>
+                    <td class="num">{{ rtrim(rtrim(number_format($discPct, 2, '.', ''), '0'), '.') }}%</td>
+                    <td class="num">{{ \App\Support\ReservationView::fmtMoney($rateAfter) }}</td>
+                    <td class="num">{{ \App\Support\ReservationView::fmtMoney($depRoom) }}</td>
+                    <td class="num">{{ \App\Support\ReservationView::fmtMoney($depCard) }}</td>
+
+
                     <td class="center">{{ $r['ps'] ?? '1' }}</td>
                     <td>{{ $r['guest_display'] ?? ($billTo['name'] ?? '-') }}</td>
+                    {{-- ARR --}}
                     <td class="center">
-                        {{ \App\Support\ReservationView::displayDateFlexible($r['exp_arr'] ?? null, $expected_arrival ?? null, true) }}
-                    </td>
-                    <td class="center">
-                        {{ \App\Support\ReservationView::displayDateFlexible($r['exp_dept'] ?? null, $expected_departure ?? null, true) }}
+                    @php $arrRaw = $r['exp_arr'] ?? ($expected_arrival ?? null); @endphp
+                    <div class="dtwrap">
+                        <span class="date">{{ \App\Support\ReservationView::fmtDate($arrRaw, false) }}</span>
+                        <span class="time">{{ \Carbon\Carbon::parse($arrRaw)->timezone('Asia/Singapore')->format('H:i') }}</span>
+                    </div>
                     </td>
 
+                    {{-- DEPT --}}
+                    <td class="center">
+                    @php $deptRaw = $r['exp_dept'] ?? ($expected_departure ?? null); @endphp
+                    <div class="dtwrap">
+                        <span class="date">{{ \App\Support\ReservationView::fmtDate($deptRaw, false) }}</span>
+                        <span class="time">{{ \Carbon\Carbon::parse($deptRaw)->timezone('Asia/Singapore')->format('H:i') }}</span>
+                    </div>
+                    </td>
                 </tr>
             @empty
                 <tr>
@@ -427,5 +531,4 @@
     </div>
 
 </body>
-
 </html>

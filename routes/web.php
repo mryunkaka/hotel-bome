@@ -316,26 +316,6 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
     ]);
 })->name('reservation-guests.bill');
 
-// === PDF BILL (inline PDF)
-// Route::get('/admin/reservation-guests/{guest}/bill.pdf', function (ReservationGuest $guest) {
-//     // Reuse data dari route HTML di atas (copy blok perhitungan yang sama)
-//     // Agar DRY, kita panggil ulang closure di atas secara sederhana:
-//     $req = request()->duplicate([], [], request()->attributes->all());
-//     $html = app()->handle(Request::create(url()->route('reservation-guests.bill', ['guest' => $guest->id]), 'GET', $req->all()))->getContent();
-
-//     // Render HTML yg sama ke PDF
-//     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true) ? strtolower(request('o', 'portrait')) : 'portrait';
-//     $pdf = Pdf::loadHTML($html)->setPaper('a4', $orientation)->setOption(['isRemoteEnabled' => false]);
-
-//     $reservation = $guest->reservation;
-//     $filename = 'bill-' . ($reservation?->reservation_no ?? $reservation?->id ?? 'reservation') . '-' . $guest->id . '.pdf';
-
-//     return response()->stream(fn() => print($pdf->output()), 200, [
-//         'Content-Type'        => 'application/pdf',
-//         'Content-Disposition' => 'inline; filename="' . $filename . '"',
-//     ]);
-// })->name('reservation-guests.bill.pdf');
-
 Route::get('/admin/reservation-guests/{guest}/folio', function (ReservationGuest $guest) {
     $reservation = $guest->reservation()
         ->with([
@@ -708,11 +688,11 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
 })->name('reservation-guests.print');
 
 Route::get('/admin/reservations/{reservation}/print', function (Reservation $reservation) {
-    // ===== Hotel aktif (dari session atau dari record) =====
+    // ===== Hotel aktif =====
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = Hotel::find($hid);
 
-    // ===== Eager load yang diperlukan (sesuai model) =====
+    // ===== Eager load =====
     $reservation->load([
         'guest:id,name,salutation,address,city,phone,email',
         'group:id,name,address,city,phone,handphone,fax,email',
@@ -721,7 +701,7 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         'reservationGuests.room:id,room_no,type,price',
     ]);
 
-    // ===== Logo ke base64 (pakai helper jika ada) =====
+    // ===== Logo ke base64 =====
     $logoData = null;
     if (function_exists('buildPdfLogoData')) {
         $logoData = buildPdfLogoData($hotel?->logo ?? null);
@@ -739,7 +719,7 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         }
     }
 
-    // ===== Orientasi kertas via query ?o=portrait|landscape =====
+    // ===== Orientasi kertas =====
     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
         ? strtolower(request('o', 'portrait'))
         : 'portrait';
@@ -747,12 +727,12 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
     // ===== Ringkas booking utk header =====
     $first = $reservation->reservationGuests->first();
 
-    // === Tentukan pihak pemesan dari reserved_by_type (hindari override) ===
+    // === Tentukan pihak pemesan (jangan override) ===
     $type = strtoupper(trim((string) ($reservation->reserved_by_type ?? 'GUEST')));
 
     $companyName = null;
     $fax = null;
-    $billTo = []; // <-- inisialisasi
+    $billTo = [];
 
     if ($type === 'GROUP' && $reservation->group) {
         $party = $reservation->group;
@@ -784,24 +764,24 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         $fax = null;
     }
 
-    // === Booking info singkat untuk header tengah (tetap) ===
+    // === Header tengah singkat (tetap) ===
     $booking = [
         'room_no' => $first?->room?->room_no ?: ($reservation->reservationGuests->count() > 1 ? 'Multiple' : '-'),
         'guest'   => $first?->guest?->display_name ?? $first?->guest?->name ?? '-',
         'period'  => implode(' - ', array_filter([
-            $reservation->expected_arrival   ? Carbon::parse($reservation->expected_arrival)->format('d/m/Y H:i') : null,
-            $reservation->expected_departure ? Carbon::parse($reservation->expected_departure)->format('d/m/Y H:i') : null,
+            $reservation->expected_arrival   ? \Carbon\Carbon::parse($reservation->expected_arrival)->format('d/m/Y H:i') : null,
+            $reservation->expected_departure ? \Carbon\Carbon::parse($reservation->expected_departure)->format('d/m/Y H:i') : null,
         ])),
     ];
 
-    // === Bangun rows untuk tabel kamar (pakai display_name agar ada salutation) ===
+    // === Bangun rows untuk tabel kamar (minim; biar di-enrich oleh ReservationView) ===
     $rows = [];
     $subtotal = 0;
     foreach ($reservation->reservationGuests as $rg) {
         $in  = $rg->expected_checkin;
         $out = $rg->expected_checkout;
 
-        $nights = ($in && $out) ? max(1, Carbon::parse($in)->diffInDays(Carbon::parse($out))) : 1;
+        $nights = ($in && $out) ? max(1, \Carbon\Carbon::parse($in)->diffInDays(\Carbon\Carbon::parse($out))) : 1;
         $rate   = (float) ($rg->room_rate ?? $rg->room?->price ?? 0);
         $subtotal += $rate * $nights;
 
@@ -809,7 +789,8 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         $rows[] = [
             'room_no'       => $rg->room?->room_no ?: '-',
             'category'      => $rg->room?->type ?: '-',
-            'rate'          => $rate,
+            'rate'          => $rate,                    // base rate
+            // diskon, tax, deposit per-guest dibiarkan kosong → akan diisi enrichRows()
             'ps'            => (int) ($rg->jumlah_orang ?? max(1, (int)$rg->male + (int)$rg->female + (int)$rg->children)),
             'guest_display' => $g?->display_name ?? $g?->name ?? '-',
             'exp_arr'       => $in,
@@ -817,15 +798,15 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         ];
     }
 
-    // (items kompatibilitas – opsional)
+    // (compat items – opsional)
     $items = array_map(function ($r) {
         return [
             'item_name'   => $r['room_no'] ? 'Room ' . $r['room_no'] : 'Room',
             'description' => trim(collect([
                 $r['category']      ? 'Category: ' . $r['category'] : null,
                 $r['guest_display'] ? 'Guest: '    . $r['guest_display'] : null,
-                $r['exp_arr']       ? 'EXP ARR: '  . Carbon::parse($r['exp_arr'])->format('d/m/Y H:i')  : null,
-                $r['exp_dept']      ? 'EXP DEPT: ' . Carbon::parse($r['exp_dept'])->format('d/m/Y H:i') : null,
+                $r['exp_arr']       ? 'EXP ARR: '  . \Carbon\Carbon::parse($r['exp_arr'])->format('d/m/Y H:i')  : null,
+                $r['exp_dept']      ? 'EXP DEPT: ' . \Carbon\Carbon::parse($r['exp_dept'])->format('d/m/Y H:i') : null,
             ])->filter()->implode(' · ')),
             'qty'         => 1,
             'unit_price'  => (float) $r['rate'],
@@ -833,15 +814,16 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         ];
     }, $rows);
 
-    $tax_total = 0;
-    $total     = $subtotal + $tax_total;
+    $tax_total  = 0;
+    $total      = $subtotal + $tax_total;
     $paid_total = (float) ($reservation->deposit ?? 0);
 
-    $clerkName = $reservation->creator?->name;
-    // Reserved By: kalau kolom reserved_by tidak diisi, pakai nama pihak (group/guest) dari $billTo
-    $reservedByForPrint = $clerkName ?: ($reservation->reserved_by ?: ($billTo['name'] ?? null));
+    // ===== Deposit header =====
+    $depositRoom = (int) ($reservation->deposit_room ?? 0);
+    $depositCard = (int) ($reservation->deposit_card ?? 0); // <— DITAMBAHKAN
 
-    $depositRoom = (int) ($reservation->deposit_room ?? 0); // DP Reservasi
+    $clerkName = $reservation->creator?->name;
+    $reservedByForPrint = $clerkName ?: ($reservation->reserved_by ?: ($billTo['name'] ?? null));
 
     $viewData = [
         'paper'       => 'A4',
@@ -863,33 +845,35 @@ Route::get('/admin/reservations/{reservation}/print', function (Reservation $res
         // header kanan
         'expected_arrival'   => $reservation->expected_arrival,
         'expected_departure' => $reservation->expected_departure,
-        'deposit_room' => $depositRoom,
+        'deposit_room'       => $depositRoom,
+        'deposit_card'       => $depositCard,   // <— DITAMBAHKAN
 
-        // header kiri
+        // header kiri (yang sudah ada)
         'payment'     => ['method' => strtolower($reservation->method ?? 'personal'), 'ref' => null],
         'status'      => $reservation->status ?? 'CONFIRM',
         'reserved_by' => $reservedByForPrint,
         'clerkName'   => $clerkName,
 
-        // identitas/billing YANG SUDAH BENAR (tidak di-override)
-        'billTo'      => $billTo,
-        'booking'     => $booking,
+        // identitas/billing
+        'billTo'  => $billTo,
+        'booking' => $booking,
 
         // tabel
-        'rows'        => $rows,
-        'items'       => $items,
+        'rows'  => $rows,
+        'items' => $items,
 
         // totals / catatan
-        'subtotal'    => $subtotal,
-        'tax_total'   => $tax_total,
-        'total'       => $total,
-        'paid_total'  => $paid_total,
+        'subtotal'   => $subtotal,
+        'tax_total'  => $tax_total,
+        'total'      => $total,
+        'paid_total' => $paid_total,
 
         'notes'         => $reservation->remarks ?? null,
         'footerText'    => 'Printed by ' . ($clerkName ?? 'System'),
         'showSignature' => true,
     ];
 
+    // Preview HTML (opsional)
     if (request()->boolean('html')) {
         return response()->view('prints.reservations.print', $viewData);
     }
@@ -1003,7 +987,6 @@ Route::get('/admin/invoices/{invoice}/preview-pdf', function (Invoice $invoice) 
         'Content-Disposition' => 'inline; filename="invoice-' . $invoice->id . '.pdf"',
     ]);
 })->name('invoices.preview-pdf');
-
 
 Route::get('/admin/income-items/preview-pdf', function () {
     $hid   = (int) (session('active_hotel_id') ?? 0);

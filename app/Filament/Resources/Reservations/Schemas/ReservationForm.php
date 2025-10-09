@@ -15,6 +15,7 @@ use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Schemas\Components\Grid;
 use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Textarea;
 use Illuminate\Support\Facades\Session;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
@@ -63,7 +64,7 @@ class ReservationForm
                             ])
                             ->default('WALKIN')
                             ->required()
-                            ->columnSpan(3),
+                            ->columnSpan(4),
 
                         Select::make('method')
                             ->label('Method')
@@ -78,7 +79,7 @@ class ReservationForm
                             ])
                             ->default('PERSONAL')
                             ->required()
-                            ->columnSpan(3),
+                            ->columnSpan(4),
 
                         Select::make('status')
                             ->label('Status')
@@ -89,16 +90,7 @@ class ReservationForm
                             ])
                             ->default('CONFIRM')
                             ->required()
-                            ->columnSpan(3),
-
-                        TextInput::make('deposit_room')
-                            ->label('Room Deposit')
-                            ->mask(RawJs::make('$money($input)'))
-                            ->stripCharacters(',')
-                            ->numeric()
-                            ->default(0)
-                            ->columnSpan(3)
-                            ->helperText('DP saat membuat reservasi.'),
+                            ->columnSpan(4),
                     ]),
                 ])
                 ->columnSpanFull(),
@@ -448,14 +440,18 @@ class ReservationForm
                                     ->searchable()
                                     ->required()
                                     ->live()
-                                    ->afterStateUpdated(function ($state, callable $set, callable $get) {
-                                        // Auto fill room rate
-                                        if ($state && empty($get('room_rate'))) {
-                                            $price = Room::whereKey($state)->value('price');
-                                            if ($price !== null) {
-                                                $set('room_rate', (int) $price);
-                                            }
-                                        }
+                                    ->afterStateUpdated(function ($state, callable $set) {
+                                        if (! $state) return;
+
+                                        $price = \App\Models\Room::whereKey($state)->value('price') ?? 0;
+
+                                        // Auto fill room_rate
+                                        $set('room_rate', (int) $price);
+
+                                        // Sekalian isi deposit 50% dari rate
+                                        $half = (float) $price * 0.5;
+                                        $set('deposit_room', $half);
+                                        $set('deposit_card', $half);
                                     })
                                     ->options(function (Get $get) {
                                         $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
@@ -646,13 +642,72 @@ class ReservationForm
                                     ->columnSpan(5),
 
                                 // Rate (2/12)
+                                Select::make('person')
+                                    ->label('Charge To')
+                                    ->options([
+                                        'PERSONAL ACCOUNT' => 'Personal Account',
+                                        'COMPANY ACCOUNT'  => 'Company Account',
+                                        'TRAVEL AGENT'     => 'Travel Agent',
+                                        'OL TRAVEL AGENT'  => 'OL Travel Agent',
+                                        'COMPLIMENTARY'    => 'Complimentary',
+                                    ])
+                                    ->default('PERSONAL ACCOUNT')
+                                    ->live() // penting: agar on-change langsung mempengaruhi room_rate
+                                    ->afterStateUpdated(function ($state, callable $set, Get $get) {
+                                        // Jika Complimentary → rate = 0
+                                        if ($state === 'COMPLIMENTARY') {
+                                            $set('room_rate', 0);
+                                            return;
+                                        }
+
+                                        // Selain Complimentary → rate terkunci & auto isi dari harga kamar
+                                        $roomId = (int) ($get('room_id') ?? 0);
+                                        if ($roomId > 0) {
+                                            $price = \App\Models\Room::whereKey($roomId)->value('price');
+                                            if ($price !== null) {
+                                                $set('room_rate', (int) $price);
+                                            }
+                                        }
+                                    })
+                                    ->columnSpan(2),
                                 TextInput::make('room_rate')
                                     ->label('Rate')
                                     ->numeric()
-                                    ->mask(RawJs::make('$money($input)'))
-                                    ->stripCharacters(',')
                                     ->placeholder('Auto from room')
                                     ->minValue(0)
+                                    ->live()
+                                    ->afterStateUpdated(function ($state, callable $set) {
+                                        $rate = (float) ($state ?? 0);
+                                        $half = $rate * 0.5;
+                                        $set('deposit_room', $half);
+                                        $set('deposit_card', $half);
+                                    })
+                                    // Disabled jika Charge To ≠ COMPLIMENTARY
+                                    ->disabled(fn(Get $get) => ($get('person') ?? '') !== 'COMPLIMENTARY')
+                                    ->dehydrated(true)
+                                    ->columnSpan(2),
+
+                                TextInput::make('deposit_room')
+                                    ->label('Deposit Room')
+                                    ->numeric()
+                                    ->minValue(0)
+                                    ->default(fn(Get $get) => (float) ($get('room_rate') ?? 0) * 0.5)
+                                    ->columnSpan(2),
+
+                                TextInput::make('deposit_card')
+                                    ->label('Deposit Card')
+                                    ->numeric()
+                                    ->minValue(0)
+                                    ->default(fn(Get $get) => (float) ($get('room_rate') ?? 0) * 0.5)
+                                    ->columnSpan(2),
+
+                                TextInput::make('discount_percent')
+                                    ->label('Discount (%)')
+                                    ->numeric()
+                                    ->minValue(0)
+                                    ->maxValue(100)
+                                    ->default(0)
+                                    ->suffix('%')
                                     ->columnSpan(2),
 
                                 TextInput::make('extra_bed')
@@ -665,18 +720,6 @@ class ReservationForm
                                     ->label('Breakfast')
                                     ->options(['Yes' => 'Yes', 'No' => 'No'])
                                     ->default('Yes')
-                                    ->columnSpan(2),
-
-                                Select::make('person')
-                                    ->label('Charge To')
-                                    ->options([
-                                        'PERSONAL ACCOUNT'   => 'Personal Account',
-                                        'COMPANY ACCOUNT' => 'Company Account',
-                                        'TRAVEL AGENT' => 'Travel Agent',
-                                        'OL TRAVEL AGENT' => 'OL Travel Agent',
-                                        'COMPLIMENTARY' => 'Complimentary',
-                                    ])
-                                    ->default('PERSONAL ACCOUNT')
                                     ->columnSpan(2),
 
                                 // Pax - TAMBAHKAN live() untuk auto-calculate jumlah_orang
@@ -715,12 +758,16 @@ class ReservationForm
                                         'VACATION' => 'Vacation',
                                     ])
                                     ->default('BUSINESS')
-                                    ->columnSpan(4),
+                                    ->columnSpan(3),
 
-                                TextInput::make('note')
+                                Textarea::make('note')
                                     ->label('Note')
-                                    ->maxLength(150)
-                                    ->columnSpan(8),
+                                    ->placeholder('Catatan khusus tamu / permintaan...')
+                                    ->autosize()
+                                    ->rows(3)
+                                    ->maxLength(500)
+                                    ->columnSpan(5),
+
                             ])->columnSpanFull(),
                         ])
 

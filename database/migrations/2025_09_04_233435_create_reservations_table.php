@@ -34,14 +34,6 @@ return new class extends Migration
             $table->dateTime('checkin_date')->nullable();
             $table->dateTime('checkout_date')->nullable();
 
-            // Deposit (ringkas, tanpa kolom transisional)
-            $table->string('deposit_type', 20)->nullable(); // DP/FOC/NONE
-            $table->unsignedBigInteger('deposit')->default(0);
-            $table->decimal('deposit_room', 15, 2)->default(0);
-            $table->decimal('deposit_card', 15, 2)->default(0);
-            // NEW: deposit dibersihkan/dipulangkan
-            $table->timestamp('deposit_cleared_at')->nullable();
-
             // Pajak global (pindahan dari reservation_guests)
             $table->foreignId('id_tax')->nullable()->constrained('tax_settings')->nullOnDelete();
             $table->index(['hotel_id', 'id_tax']);

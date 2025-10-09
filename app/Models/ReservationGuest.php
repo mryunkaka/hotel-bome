@@ -38,6 +38,13 @@ class ReservationGuest extends Model
         'extra_bed',
         'discount_percent',
         'charge',
+        'deposit_room',
+        'deposit_card',
+        'deposit_cleared_at',
+        'bill_no',
+        'bill_closed_at',
+        'rate_type',
+        'created_by',
     ];
 
     protected $casts = [
@@ -53,7 +60,16 @@ class ReservationGuest extends Model
         'children'          => 'integer',
         'extra_bed'         => 'integer',
         'charge'            => 'integer',
+        'deposit_room'        => 'decimal:2',
+        'deposit_card'        => 'decimal:2',
+        'deposit_cleared_at'  => 'datetime',
+        'bill_closed_at'      => 'datetime',
     ];
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 
     /**
      * Biar ikut saat ->toArray() / json (mis. kalau kamu mapping ke $rows)
@@ -195,6 +211,13 @@ class ReservationGuest extends Model
         });
 
         static::updating(function (self $m): void {
+            $rate = (float) ($m->room_rate ?? 0);
+            if ($rate > 0) {
+                // hanya auto-isi jika kosong
+                if ((float) ($m->deposit_room ?? 0) === 0.0) $m->deposit_room = $rate * 0.5;
+                if ((float) ($m->deposit_card ?? 0) === 0.0) $m->deposit_card = $rate * 0.5;
+            }
+
             $m->hotel_id = Session::get('active_hotel_id')
                 ?? Auth::user()?->hotel_id
                 ?? $m->hotel_id;

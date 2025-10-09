@@ -96,11 +96,9 @@ final class ReservationMath
                 : Carbon::now();
             $refTime = $refTime->setTimezone($tz);
 
-            // ⬇⬇⬇ Perubahan inti:
-            // Dulu: penalty jika refTime > arrivalAt (terlambat)
-            // Sekarang: penalty jika refTime < arrivalAt (datang terlalu awal / early check-in)
+            // Perubahan: penalti untuk early check-in (refTime < arrivalAt)
             if ($refTime->lessThan($arrivalAt)) {
-                $earlyMins    = $refTime->diffInMinutes($arrivalAt);   // selisih menuju jam arrival
+                $earlyMins    = $refTime->diffInMinutes($arrivalAt);
                 $penaltyHours = (int) ceil($earlyMins / 60);
                 $penaltyRp    = $penaltyHours * max(0, $perHour);
 
@@ -117,7 +115,6 @@ final class ReservationMath
 
         return ['hours' => 0, 'amount' => 0];
     }
-
 
     /**
      * Hitung total final dari satu "row" generik (dipakai jika mau).
@@ -191,14 +188,13 @@ final class ReservationMath
         $end    = $rg->actual_checkout ?: Carbon::now($tz);
         $nights = self::nights($start, $end, 1);
 
-        // === FIX UTAMA: pakai basicRate() supaya tidak “ketarik guest lain / harga terkini”.
+        // Pakai basicRate() (tidak ketarik harga lain).
         $rate     = (int) self::basicRate($rg);
         $discPct  = (float) ($rg->discount_percent ?? 0);
         $charge   = (int) ($rg->charge ?? 0);
         $extra    = (int) ($rg->extra_bed_total ?? 0);
         $taxPct   = (float) ($rg->tax_percent ?? ($rg->tax?->percent ?? 0));
 
-        // Penalty: utamakan expected_checkin milik GUEST
         $expectedArrival = $rg->expected_checkin ?: ($rg->reservation?->expected_arrival);
         $pen = self::latePenalty($expectedArrival, $rg->actual_checkin, $rate, ['tz' => $tz]);
         $penalty = (int) ($pen['amount'] ?? 0);

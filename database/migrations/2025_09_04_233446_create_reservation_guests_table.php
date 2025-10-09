@@ -23,6 +23,11 @@ return new class extends Migration
             $table->dateTime('actual_checkin')->nullable();
             $table->dateTime('actual_checkout')->nullable();
 
+            // Deposit (ringkas, tanpa kolom transisional)
+            $table->decimal('deposit_room', 15, 2)->default(0);
+            $table->decimal('deposit_card', 15, 2)->default(0);
+            $table->timestamp('deposit_cleared_at')->nullable();
+
             // Biaya per-guest/per-room (tanpa pajak karena pajak sudah di reservations)
             $table->integer('service')->default(0);
             $table->integer('charge')->default(0); // ditambahkan setelah 'service'

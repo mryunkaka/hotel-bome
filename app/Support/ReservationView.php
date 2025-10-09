@@ -9,6 +9,9 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Session;
 
+// ⬇️ tambahan impor agar parsing tanggal konsisten
+use App\Support\ValueParsers;
+
 final class ReservationView
 {
     /* =========================
@@ -138,7 +141,7 @@ final class ReservationView
             $in  = $r['actual_in']  ?? $r['expected_in']  ?? $r['expected_checkin']  ?? null;
             $out = $r['actual_out'] ?? $r['expected_out'] ?? $r['expected_checkout'] ?? null;
 
-            if (!isset($r['nights']) || (int)$r['nights'] <= 0) {
+            if (!isset($r['nights']) || (int) $r['nights'] <= 0) {
                 if ($in && $out) {
                     try {
                         $r['nights'] = max(
@@ -155,35 +158,39 @@ final class ReservationView
                 }
             }
 
-            // ===== (sisanya tetap seperti versi kamu) =====
-            $needDisc    = !array_key_exists('discount_percent', $r);
-            $needTaxId   = !array_key_exists('id_tax', $r) && !array_key_exists('tax_percent', $r) && !array_key_exists('tax', $r);
-            $needExtra   = !array_key_exists('extra_bed', $r);
-            $needService = !array_key_exists('service', $r);
-            $needBase    = !array_key_exists('rate', $r) && !array_key_exists('unit_price', $r) && !array_key_exists('room_rate', $r);
+            // Flag kebutuhan field (isi hanya jika belum ada)
+            $needDisc       = !array_key_exists('discount_percent', $r);
+            $needTaxId      = !array_key_exists('id_tax', $r) && !array_key_exists('tax_percent', $r) && !array_key_exists('tax', $r);
+            $needExtra      = !array_key_exists('extra_bed', $r);
+            $needService    = !array_key_exists('service', $r);
+            $needBase       = !array_key_exists('rate', $r) && !array_key_exists('unit_price', $r) && !array_key_exists('room_rate', $r);
+            $needDepRoom    = !array_key_exists('deposit_room', $r);
+            $needDepCard    = !array_key_exists('deposit_card', $r);
+            $needPs         = !array_key_exists('ps', $r);
+            $needGuestName  = !array_key_exists('guest_display', $r) && !array_key_exists('guest', $r);
+            $needExpArr     = !array_key_exists('exp_arr', $r);
+            $needExpDept    = !array_key_exists('exp_dept', $r);
 
-            if (!($needDisc || $needTaxId || $needExtra || $needService || $needBase)) {
+            if (!($needDisc || $needTaxId || $needExtra || $needService || $needBase || $needDepRoom || $needDepCard || $needPs || $needGuestName || $needExpArr || $needExpDept)) {
                 return $r;
             }
 
             $roomNo = trim((string) ($r['room_no'] ?? ''));
             $roomId = $roomIdByNo[$roomNo] ?? null;
 
-            $arrRaw  = $r['exp_arr'] ?? null;
+            // ===== Pakai parser fleksibel → Carbon UTC → ke tanggal (Y-m-d) untuk matching whereDate()
+            $arrRaw  = $r['exp_arr'] ?? ($r['expected_checkin'] ?? null);
             $arrDate = null;
             if ($arrRaw) {
-                try {
-                    $arrDate = Carbon::parse($arrRaw)->toDateString();
-                } catch (\Throwable $e) {
-                    if (preg_match('~^(\d{2})/(\d{2})/(\d{4})~', (string)$arrRaw, $m)) {
-                        $arrDate = "{$m[3]}-{$m[2]}-{$m[1]}";
-                    }
+                $c = ValueParsers::parseDateFlexible($arrRaw, 'Asia/Singapore'); // hasil UTC
+                if ($c instanceof Carbon) {
+                    $arrDate = $c->toDateString();
                 }
             }
 
             try {
                 $rg = ReservationGuest::query()
-                    ->with('tax')
+                    ->with(['reservation.tax', 'room', 'guest'])
                     ->when($activeHotelId, fn($qq) => $qq->where('hotel_id', $activeHotelId))
                     ->when($roomId,       fn($qq) => $qq->where('room_id', $roomId))
                     ->when($arrDate,      fn($qq) => $qq->whereDate('expected_checkin', $arrDate))
@@ -191,24 +198,68 @@ final class ReservationView
                     ->first();
 
                 if ($rg) {
-                    if ($needBase    && $rg->room_rate !== null)        $r['room_rate']        = (float) $rg->room_rate;
-                    if ($needDisc    && $rg->discount_percent !== null) $r['discount_percent'] = (float) $rg->discount_percent;
-                    if ($needExtra   && $rg->extra_bed !== null)        $r['extra_bed']        = (int)   $rg->extra_bed;
-                    if ($needService && $rg->service !== null)          $r['service']          = (int)   $rg->service;
+                    // Base rate & diskon
+                    if ($needBase && $rg->room_rate !== null) {
+                        $r['room_rate'] = (float) $rg->room_rate;
+                    }
+                    if ($needDisc && $rg->discount_percent !== null) {
+                        $r['discount_percent'] = (float) $rg->discount_percent;
+                    }
 
+                    // Deposit per guest
+                    if ($needDepRoom && $rg->deposit_room !== null) {
+                        $r['deposit_room'] = (float) $rg->deposit_room;
+                    }
+                    if ($needDepCard && $rg->deposit_card !== null) {
+                        $r['deposit_card'] = (float) $rg->deposit_card;
+                    }
+
+                    // Extra & service & charge
+                    if ($needExtra && $rg->extra_bed !== null) {
+                        $r['extra_bed'] = (int) $rg->extra_bed;
+                    }
+                    if ($needService && $rg->service !== null) {
+                        $r['service'] = (int) $rg->service;
+                    }
+                    if (!array_key_exists('charge', $r) && $rg->charge !== null) {
+                        $r['charge'] = (int) $rg->charge;
+                    }
+
+                    // PS & Guest name
+                    if ($needPs) {
+                        $r['ps'] = (int) ($rg->jumlah_orang ?? 1);
+                    }
+                    if ($needGuestName) {
+                        $r['guest_display'] = optional($rg->guest)->name ?? '-';
+                    }
+
+                    // Expected dates
+                    if ($needExpArr) {
+                        $r['exp_arr'] = $rg->expected_checkin;
+                    }
+                    if ($needExpDept) {
+                        $r['exp_dept'] = $rg->expected_checkout;
+                    }
+
+                    // Pajak dari reservation.tax
                     if ($needTaxId) {
-                        if ($rg->id_tax) {
-                            $r['id_tax'] = (int) $rg->id_tax;
-                            if ($rg->tax && !isset($taxLookup[$rg->id_tax])) {
-                                $taxLookup[$rg->id_tax] = (float) $rg->tax->percent;
+                        $tax = optional($rg->reservation)->tax;
+                        if ($tax) {
+                            $r['id_tax'] = (int) $tax->id;
+                            $r['tax_percent'] = (float) $tax->percent;
+                            if (!isset($taxLookup[$tax->id])) {
+                                $taxLookup[$tax->id] = (float) $tax->percent;
                             }
-                        } elseif ($rg->tax) {
-                            $r['tax_percent'] = (float) $rg->tax->percent;
                         }
+                    }
+
+                    // Category fallback (opsional)
+                    if (empty($r['category']) && optional($rg->room->category)->name) {
+                        $r['category'] = $rg->room->category->name;
                     }
                 }
             } catch (\Throwable $e) {
-                // ignore
+                // abaikan error enrich per baris
             }
 
             return $r;
@@ -230,28 +281,38 @@ final class ReservationView
         // 1) rows
         $rows  = [];
         if (!empty($ctx['rows']) && is_iterable($ctx['rows'])) {
-            // normalize to array
             foreach ($ctx['rows'] as $r) $rows[] = is_array($r) ? $r : (array) $r;
         } elseif (!empty($ctx['items']) && is_iterable($ctx['items'])) {
             $rows = self::buildRowsFromItems($ctx['items'], $ctx['ps'] ?? null);
         }
 
-        // 2) tax lookup (controller override > derive), dukung snake & camel
+        // 2) tax lookup
         $taxLookupInput = $ctx['tax_lookup'] ?? ($ctx['taxLookup'] ?? null);
         $taxLookup = self::ensureTaxLookup($rows, $taxLookupInput);
 
         // 3) enrich dari reservation_guests
         [$rowsEnriched, $extraTaxMap] = self::enrichRows($rows, $ctx['hotel'] ?? null);
-        // gabungkan tax map dari enrich (kalau ada)
         $taxLookup = $extraTaxMap ? ($taxLookup + $extraTaxMap) : $taxLookup;
 
-        // 4) header summaries & deposits (dukung snake & camel + legacy)
+        // 4) header summaries & deposits
         $depositRoom = isset($ctx['deposit_room']) ? (float)$ctx['deposit_room']
             : (isset($ctx['depositRoom']) ? (float)$ctx['depositRoom']
                 : (isset($ctx['deposit']) ? (float)$ctx['deposit'] : (float)($ctx['paid_total'] ?? ($ctx['paidTotal'] ?? 0))));
 
         $depositCard = isset($ctx['deposit_card']) ? (float)$ctx['deposit_card']
             : (isset($ctx['depositCard']) ? (float)$ctx['depositCard'] : 0.0);
+
+        // ⬇️ Fallback NON-BREAKING: jika header deposit 0, ambil dari sum RG (supaya tidak 0 saat data ada di RG)
+        if ((float)$depositRoom === 0.0 || (float)$depositCard === 0.0) {
+            $sumDepRoom = 0.0;
+            $sumDepCard = 0.0;
+            foreach ($rowsEnriched as $rr) {
+                $sumDepRoom += (float) ($rr['deposit_room'] ?? 0);
+                $sumDepCard += (float) ($rr['deposit_card'] ?? 0);
+            }
+            if ((float)$depositRoom === 0.0 && $sumDepRoom > 0) $depositRoom = $sumDepRoom;
+            if ((float)$depositCard === 0.0 && $sumDepCard > 0) $depositCard = $sumDepCard;
+        }
 
         $reservedTitle = $ctx['reserved_title'] ?? ($ctx['reservedTitle'] ?? null);
         $reservedBy    = $ctx['reserved_by']    ?? ($ctx['reservedBy']    ?? (($ctx['billTo']['name'] ?? null) ?? null));
@@ -267,7 +328,6 @@ final class ReservationView
             ($hotel?->city     ? $hotel->city : null),
         ]);
 
-        // NOTE: depositVal dipertahankan untuk kompatibilitas lama (isi = Room Deposit)
         return [
             'rows'          => $rowsEnriched,
             'taxLookup'     => $taxLookup,
@@ -281,7 +341,7 @@ final class ReservationView
 
             'reservedFull'  => $reservedFull,
             'clerkName'     => $clerkName,
-            'hotelRight'     => $hotelRight,
+            'hotelRight'    => $hotelRight,
         ];
     }
 }

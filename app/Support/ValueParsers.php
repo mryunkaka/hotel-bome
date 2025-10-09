@@ -49,7 +49,7 @@ class ValueParsers
         if (is_int($value) || is_float($value)) {
             $n = (float) $value;
 
-            // Coba sebagai Excel serial dulu (benar untuk 45910, 45678.75, 0.53, dll.)
+            // Coba sebagai Excel serial dulu (45910, 45678.75, 0.53, dll.)
             if (($asExcel = $parseAsExcelSerial($n)) !== null) {
                 return $asExcel;
             }
@@ -59,7 +59,6 @@ class ValueParsers
                 $base = Carbon::now($tzInput)->startOfDay()->addSeconds((int) $n);
                 return $base->utc();
             }
-            // Lanjut ke parsing string (jarang terjadi)
         }
 
         // 3) String
@@ -68,7 +67,7 @@ class ValueParsers
             return null;
         }
 
-        // 3a) Jika string numeric (mis. "45910" atau "45910.5" atau ".5") → perlakukan sebagai Excel serial/fraction
+        // String numeric → coba serial / detik-of-day
         if (preg_match('/^[+-]?(?:\d+\.?\d*|\.\d+)$/', $str)) {
             $n = (float) $str;
 
@@ -76,16 +75,13 @@ class ValueParsers
                 return $asExcel;
             }
 
-            // fallback: 1..86399 detik-of-day
             if ($n >= 1 && $n < 86400) {
                 $base = Carbon::now($tzInput)->startOfDay()->addSeconds((int) $n);
                 return $base->utc();
             }
-
-            // Tidak cocok → biarkan lanjut ke pola lain (sangat jarang)
         }
 
-        // 3b) Pola time-only "HH:MM[:SS]" → gabungkan ke tanggal hari ini
+        // Time-only "HH:MM[:SS]"
         if (preg_match('/^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/', $str, $m)) {
             [$all, $h, $i, $s] = $m + [null, 0, 0, 0];
             $base = Carbon::now($tzInput)->startOfDay()
@@ -95,14 +91,14 @@ class ValueParsers
             return $base->utc();
         }
 
-        // 3c) ISO-like
+        // ISO-like
         try {
             return Carbon::parse($str, $tzInput)->utc();
         } catch (\Throwable) {
-            // lanjut patterns
+            // lanjut ke patterns
         }
 
-        // 3d) Patterns umum
+        // Patterns umum
         $patterns = [
             'Y-m-d H:i:s',
             'Y-m-d H:i',
@@ -129,7 +125,7 @@ class ValueParsers
             }
         }
 
-        // Tanpa fallback strtotime/epoch → hindari 1970 salah kaprah
+        // Hindari fallback epoch
         return null;
     }
 }

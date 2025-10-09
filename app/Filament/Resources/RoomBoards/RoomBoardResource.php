@@ -22,7 +22,7 @@ class RoomBoardResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'room';
 
-    protected static ?string $navigationLabel = 'Room Board';
+    protected static ?string $navigationLabel = 'Room Status';
 
     public static function form(Schema $schema): Schema
     {

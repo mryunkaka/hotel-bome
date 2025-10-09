@@ -504,6 +504,12 @@ Route::post('/admin/reservation-guests/{guest}/checkin', function (Request $requ
 })->name('reservation-guests.checkin')->middleware(['web', 'auth']);
 
 Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest $guest) {
+    // === Ambil mode dari query: single | all (default: all) ===
+    $mode = strtolower((string) request('mode', 'all'));
+    if (! in_array($mode, ['single', 'all'], true)) {
+        $mode = 'all';
+    }
+
     $reservation = $guest->reservation()->with([
         'guest:id,name,salutation,address,city,phone,email',
         'group:id,name,address,city,phone,handphone,fax,email',
@@ -514,16 +520,19 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = Hotel::find($hid);
 
-    // Penting: muat relasi tax supaya bisa fallback percent
+    // Muat relasi yang dibutuhkan (jangan minta kolom yg tak ada di reservations)
     $guest->loadMissing([
         'guest:id,name,salutation,city,phone,email,address',
         'room:id,room_no,type,price',
-        // ====== GANTI: tambahkan deposit_room & deposit_card, hapus deposit ======
-        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,deposit_room,deposit_card,created_at,entry_date,reserved_by_type,guest_id',
+        'reservation:id,hotel_id,reservation_no,expected_arrival,expected_departure,method,status,created_at,entry_date,reserved_by_type,guest_id,checkin_date,checkout_date,id_tax',
         'reservation.creator:id,name',
         'reservation.group:id,name,address,city,phone,handphone,fax,email',
         'reservation.guest:id,name,salutation,address,city,phone,email',
         'reservation.tax:id,percent',
+        // penting untuk mode=all
+        'reservation.reservationGuests:id,reservation_id,guest_id,room_id,actual_checkin,expected_checkin,actual_checkout,expected_checkout,room_rate,discount_percent,deposit_room,deposit_card,male,female,children,jumlah_orang',
+        'reservation.reservationGuests.guest:id,name,salutation',
+        'reservation.reservationGuests.room:id,room_no,type,price',
     ]);
 
     // Logo (tetap)
@@ -582,10 +591,12 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         $fax = null;
     }
 
-    // Wajib sudah actual_checkin
-    abort_if(blank($guest->actual_checkin), 403, 'Belum check-in.');
+    // Wajib sudah actual_checkin — hanya untuk mode=single
+    if ($mode === 'single') {
+        abort_if(blank($guest->actual_checkin), 403, 'Belum check-in.');
+    }
 
-    // Nights
+    // Nights untuk baris guest yg dipilih (tetap aman untuk mode=all; blade akan hitung sendiri)
     $actualIn  = $guest->actual_checkin;
     $actualOut = $guest->actual_checkout ?: $guest->expected_checkout;
     $nights = ($actualIn && $actualOut)
@@ -595,7 +606,7 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
     $rate      = (float) ($guest->room_rate ?? $guest->room?->price ?? 0);
     $pax       = (int) ($guest->jumlah_orang ?? max(1, (int)$guest->male + (int)$guest->female + (int)$guest->children));
 
-    // ==== INI YANG DITAMBAHKAN KE ROW ====
+    // Tambahan nilai baris
     $discountPercent = (float) ($guest->discount_percent ?? 0);
     $taxPercent      = (float) ($reservation->tax?->percent ?? 0);
     $serviceRp       = (float) ($guest->service ?? 0);
@@ -603,15 +614,15 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
     $idTax           = $reservation->id_tax ?? null;
 
     $subtotal  = $rate * $nights;
-    $tax_total = 0.0; // (box lama masih 0; perhitungan detail dilakukan di Blade)
+    $tax_total = 0.0;
     $total     = $subtotal + $tax_total;
 
     $clerkName = $reservation->creator?->name;
     $reservedByForPrint = $clerkName ?: ($billTo['name'] ?? null);
 
-    // ====== TAMBAHAN: ambil DP reservasi & jaminan check-in dari reservation ======
-    $depositRoom = (int) ($reservation->deposit_room ?? 0); // DP Reservasi
-    $depositCard = (int) ($reservation->deposit_card ?? 0); // Jaminan saat Check-in
+    // Deposit dari RG terpilih (total seluruh RG akan dihitung di blade bila mode=all)
+    $depositRoom = (int) ($guest->deposit_room ?? 0);
+    $depositCard = (int) ($guest->deposit_card ?? 0);
 
     $viewData = [
         'paper'       => 'A4',
@@ -634,9 +645,13 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'reservedType' => $type,
         'clerkName'   => $clerkName,
 
+        // === tambahkan ini ===
+        'guest' => $guest,        // <— penting untuk mode=single
+        'mode'  => $mode,         // sudah ada, tetap
+
         'billTo'      => $billTo,
 
-        // Baris tunggal (RG ini saja) + FIELD TAMBAHAN (tetap)
+        // Baris tunggal (RG ini saja) – dipakai untuk mode=single
         'row'         => [
             'room_no'       => $guest->room?->room_no ?: ('#' . $guest->room_id),
             'category'      => $guest->room?->type ?: '-',
@@ -647,8 +662,6 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
             'actual_in'     => $actualIn,
             'actual_out'    => $guest->actual_checkout,
             'expected_out'  => $guest->expected_checkout,
-
-            // === Tambahan agar Blade tidak 0 semua ===
             'discount_percent' => $discountPercent,
             'tax_percent'      => $taxPercent,
             'service'          => $serviceRp,
@@ -664,12 +677,15 @@ Route::get('/admin/reservation-guests/{guest}/print', function (ReservationGuest
         'footerText'  => 'Printed by ' . ($clerkName ?? 'System'),
         'showSignature' => true,
 
-        // kirim juga objek reservation (tetap)
+        // kirim juga objek reservation (untuk mode=all)
         'reservation' => $reservation,
 
-        // ====== KIRIM DEPOSIT BARU KE VIEW ======
+        // Deposit RG terpilih (hanya referensi; total akan dihitung di blade)
         'deposit_room' => $depositRoom,
         'deposit_card' => $depositCard,
+
+        // === kirim flag mode ke blade ===
+        'mode' => $mode,
     ];
 
     if (request()->boolean('html')) {

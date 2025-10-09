@@ -16,10 +16,10 @@ class ReservationGuestsTable
     {
         return $table
             ->columns([
-                // TextColumn::make('reservation.reservation_no')
-                //     ->label('Reservation No')
-                //     ->searchable()
-                //     ->sortable(),
+                TextColumn::make('reservation.reservation_no')
+                    ->label('Kode Checkin')
+                    ->searchable()
+                    ->sortable(),
 
                 TextColumn::make('actual_checkin')
                     ->label('Actual Checkin')
@@ -55,10 +55,25 @@ class ReservationGuestsTable
                 //
             ])
             ->recordActions([
-                TableAction::make('print_checkin')
-                    ->label('Print Check-in')
+                TableAction::make('print_checkin_single')
+                    ->label('Print Check-in (Single)')
                     ->icon('heroicon-m-printer')
-                    ->url(fn($record) => route('reservation-guests.print', ['guest' => $record->id]))
+                    ->color('info')
+                    ->url(fn($record) => route('reservation-guests.print', [
+                        'guest' => $record->id,
+                        'mode'  => 'single', // ⬅️ cetak hanya guest ini
+                    ]))
+                    ->openUrlInNewTab(),
+
+                TableAction::make('print_checkin_all')
+                    ->label('Print Check-in (All)')
+                    ->icon('heroicon-o-printer')
+                    ->color('success')
+                    ->visible(fn($record) => $record->reservation?->reservationGuests()->count() > 1)
+                    ->url(fn($record) => route('reservation-guests.print', [
+                        'guest' => $record->id,
+                        'mode'  => 'all', // ⬅️ cetak seluruh guest dalam reservasi ini
+                    ]))
                     ->openUrlInNewTab(),
             ])
             ->modifyQueryUsing(

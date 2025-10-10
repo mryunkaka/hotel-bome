@@ -11,10 +11,12 @@
         $d = fn($v) => $v ? Carbon::parse($v)->format('d/m/Y H:i') : '-';
         $ds = fn($v) => $v ? Carbon::parse($v)->format('d/m H:i') : '-';
 
+        // Paper & orientasi
         $paper = strtoupper($paper ?? 'A4');
         $orientation = in_array(strtolower($orientation ?? 'portrait'), ['portrait','landscape'], true)
             ? strtolower($orientation) : 'portrait';
 
+        // Hotel (kanan header)
         $hotelRight = array_filter([
             $hotel?->name, $hotel?->address,
             trim(($hotel?->city ? $hotel->city.' ' : '').($hotel?->postcode ?? '')),
@@ -22,97 +24,67 @@
             $hotel?->email ?: null,
         ]);
 
-        // ===== Reserved By
+        // Reservation & Reserved By
         $resv    = $reservation ?? null;
         $rbType  = strtoupper($resv?->reserved_by_type ?? 'GUEST');
         $isGroup = $rbType === 'GROUP' && $resv?->group;
 
         $rbObj   = $isGroup ? $resv?->group : ($resv?->guest ?? null);
-        $rbName  = $rbObj?->name ?? '-';
+        $rbName  = $rbObj?->name  ?? '-';
         $rbAddr  = $rbObj?->address ?? '-';
-        $rbCity  = $rbObj?->city ?? '-';
+        $rbCity  = $rbObj?->city  ?? '-';
         $rbPhone = $rbObj?->phone ?? ($rbObj?->handphone ?? '-');
         $rbEmail = $rbObj?->email ?? '-';
 
-        // MODE cetak — PASTIKAN didefinisikan di awal
+        // Mode cetak
         $mode = strtolower((string) ($mode ?? request('mode', 'single')));
         $mode = in_array($mode, ['all', 'single', 'remaining'], true) ? $mode : 'single';
 
-        // Koleksi tamu yg akan DICETAK (bukan semua tamu di reservation)
-        $guests = collect($guests ?? []);
-        $totalGuestsRegistered = max(1, $guests->count());
+        // List RG yang dicetak (fall back ke semua RG di reservation bila $guests kosong)
+        $rgList = collect($guests ?? []);
+        if ($rgList->isEmpty() && $resv) {
+            $rgList = $resv->reservationGuests()->get();
+        }
+        $totalGuestsRegistered = max(1, $rgList->count());
 
-        // Angka agregat yang akan DITAMPILKAN
+        // Pajak (reservation-level)
+        $taxPctReservation = (float) ($resv?->tax?->percent ?? 0);
+
+        // ======= TOTAL DEPOSIT (header + per-RG) =======
+        // NB: deposit header di sistemmu saat ini hanya 'deposit_card'.
+        $depositCardHeader = (int) ($resv?->deposit_card ?? $resv?->deposit ?? 0);
+        $depositRoomHeader = (int) ($resv?->deposit_room ?? 0); // kalau memang masih ada kolom ini
+
+        $depCardFromRg = (int) $rgList->sum(fn($g) => (int) ($g->deposit_card ?? 0));
+        $depRoomFromRg = (int) $rgList->sum(fn($g) => (int) ($g->deposit_room ?? 0));
+
+        $depositCardTotal = $depositCardHeader + $depCardFromRg;
+        $depositRoomTotal = $depositRoomHeader + $depRoomFromRg;
+        $depositGrand     = $depositCardTotal + $depositRoomTotal;
+
+        // Timezone
+        $tz = 'Asia/Makassar';
+
+        /* ===== Agregat untuk tabel baris ===== */
         $sumBase  = 0;
         $sumTax   = 0;
         $sumGrand = 0;
 
-        $taxPctReservation      = (float) ($resv?->tax?->percent ?? 0);
-        $depositCardReservation = (int)   ($resv?->deposit_card ?? $resv?->deposit ?? 0);
-        $tz = 'Asia/Makassar';
+        /* ===== Samakan sumber data untuk loop tabel =====
+        View di bawah pakai $guests, jadi pastikan $guests terdefinisi. */
+        $guests = $rgList;
 
-        // MODE cetak
-        $mode = strtolower((string) ($mode ?? request('mode', 'single')));
-        $mode = in_array($mode, ['all', 'single', 'remaining'], true) ? $mode : 'single';
-
-        // Koleksi guests sudah dikirim dari route
-        $guests = collect($guests ?? []);
-        $totalGuestsRegistered = max(1, $guests->count());
-
-        // Pajak efektif di tampilan baris (bukan untuk agregat reservation):
-        // - mode=all    → pajak reservation apa adanya
-        // - mode=single → pajak dibagi rata antar jumlah tamu (contoh 10% & 2 tamu → 5%)
-        $taxPctEffective = $mode === 'single'
-            ? ((float) $taxPctReservation) / $totalGuestsRegistered
-            : (float) $taxPctReservation;
-
-        // ===== SPLIT PAJAK (untuk mode=all) — sama seperti sebelumnya
-        $split = $split ?? null;
-        if ($mode === 'all') {
-            if (!is_array($split)) {
-                $reservationId = (int) ($resv->id ?? 0);
-                $splitCount = 0;
-                if ($reservationId > 0) {
-                    $splitCount = (int) \App\Models\Payment::query()
-                        ->where('reservation_id', $reservationId)
-                        ->where('method', 'SPLIT')
-                        ->count();
-                }
-                $split = [
-                    'enabled'     => $splitCount > 0,
-                    'guest_count' => $totalGuestsRegistered,
-                    'split_count' => $splitCount,
-                    'tax_total'   => 0,  // diisi setelah loop
-                    'tax_share'   => 0,
-                    'less_total'  => 0,
-                    'to_pay_now'  => 0,
-                ];
-            }
-        }
-
-        // ===== Agregat reservation (independen dari mode tampilan baris)
+        /* ===== Agregat reservation (dipakai di footer/remaining) ===== */
         $resSumBaseAll      = 0;   // subtotal semua guest
-        $resSumTaxAll       = 0;   // pajak semua guest (pakai $taxPctReservation)
-        $resSumBaseChecked  = 0;   // subtotal guest yg sudah C/O
-        $resSumTaxChecked   = 0;   // pajak guest yg sudah C/O
-        $checkedItems       = [];  // daftar guest yang sudah C/O beserta nominal (base+tax)
+        $resSumTaxAll       = 0;   // pajak semua guest
+        $resSumBaseChecked  = 0;   // subtotal guest yang sudah check-out
+        $resSumTaxChecked   = 0;   // pajak guest yang sudah check-out
+        $checkedItems       = [];  // daftar guest yg sudah C/O (untuk listing di footer)
 
-        // ===== Minibar totals per guest … (bagianmu yang lama, biarkan)
-        $minibarTotals = [];
-        if (!empty($resv) && isset($guests)) {
-            $guestIds = collect($guests)->pluck('id')->filter()->values()->all();
-            if (!empty($guestIds)) {
-                $minibarTotals = \App\Models\MinibarReceipt::query()
-                    ->whereIn('reservation_guest_id', $guestIds)
-                    ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
-                    ->groupBy('reservation_guest_id')
-                    ->pluck('sum_total', 'reservation_guest_id')
-                    ->toArray();
-            }
-        }
-        $perGuestBase = [];
-
+        /* (opsional) data split pajak */
+        $split = $split ?? null;
     @endphp
+
     <title>{{ $title ?? 'GUEST BILL' }} — {{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</title>
     <style>
         @page { size: {{ $paper }} {{ $orientation }}; margin: 10mm; }
@@ -173,53 +145,49 @@
 
     {{-- ===== HEADER ===== --}}
     <table class="hdr">
-        <tr>
-            <td class="left">
-                @if (!empty($logoData)) <span class="logo"><img src="{{ $logoData }}" alt="Logo"></span> @endif
-            </td>
-            <td class="mid">
-                <div class="title">{{ $title ?? 'GUEST BILL' }}</div>
-                <div class="sub">{{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</div>
-            </td>
-            <td class="right">
-                <div class="hotel-meta">{!! !empty($hotelRight) ? implode('<br>', array_map('e', $hotelRight)) : '&nbsp;' !!}</div>
-            </td>
-        </tr>
+    <tr>
+        <td class="left">
+        @if (!empty($logoData)) <span class="logo"><img src="{{ $logoData }}" alt="Logo"></span> @endif
+        </td>
+        <td class="mid">
+        <div class="title">{{ $title ?? 'GUEST BILL' }}</div>
+        <div class="sub">{{ $invoiceNo ?? '#' . ($invoiceId ?? '-') }}</div>
+        </td>
+        <td class="right">
+        <div class="hotel-meta">{!! !empty($hotelRight) ? implode('<br>', array_map('e', $hotelRight)) : '&nbsp;' !!}</div>
+        </td>
+    </tr>
     </table>
 
-    {{-- ===== INFO RESERVED BY (tanpa detail 1 guest) ===== --}}
     <table class="info">
-        <tr>
-            <td class="lbl">{{ $isGroup ? 'Company' : 'Reserved By' }}</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $rbName }}</td>
-            <td class="gap"></td>
-            <td class="lbl">Deposit Card</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $m($depositCardReservation) }}</td>
-        </tr>
-
-        <tr>
-            <td class="lbl">Address</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $rbAddr }}</td>
-            <td class="gap"></td>
-            <td class="lbl">City</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $rbCity }}</td>
-        </tr>
-
-        <tr>
-            <td class="lbl">Phone</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $rbPhone }}</td>
-            <td class="gap"></td>
-            <td class="lbl">Email</td>
-            <td class="sep">:</td>
-            <td class="val">{{ $rbEmail }}</td>
-        </tr>
+    <tr>
+        <td class="lbl">{{ $isGroup ? 'Company' : 'Reserved By' }}</td>
+        <td class="sep">:</td>
+        <td class="val">{{ $rbName }}</td>
+        <td class="gap"></td>
+        <td class="lbl">Deposit Card</td>
+        <td class="sep">:</td>
+        <td class="val">{{ $m($depositCardTotal) }}</td>
+    </tr>
+    <tr>
+        <td class="lbl">Address</td>
+        <td class="sep">:</td>
+        <td class="val">{{ $rbAddr }}</td>
+        <td class="gap"></td>
+        <td class="lbl">Deposit Room</td>
+        <td class="sep">:</td>
+        <td class="val">{{ $m($depositRoomTotal) }}</td>
+    </tr>
+    <tr>
+        <td class="lbl">Phone / Email</td>
+        <td class="sep">:</td>
+        <td class="val">{{ $rbPhone }}{{ $rbEmail && $rbEmail !== '-' ? ' • '.$rbEmail : '' }}</td>
+        <td class="gap"></td>
+        <td class="lbl"><strong>Deposit Total</strong></td>
+        <td class="sep">:</td>
+        <td class="val"><strong>{{ $m($depositGrand) }}</strong></td>
+    </tr>
     </table>
-
 
     <div class="line"></div>
 
@@ -482,23 +450,16 @@
 
         @if ($mode === 'all')
         @php
-            // Basis tagihan yang dicetak (sudah mempertimbangkan split pajak jika aktif)
+            // Dasar tagihan untuk dokumen ini
             $billBase = (!empty($split['to_pay_now']) && $split['to_pay_now'] > 0)
                 ? (int) $split['to_pay_now']
                 : (int) $sumGrand;
 
-            // HANYA yang bukan jenis deposit yang dikecualikan dari "Amount Paid".
-            // Catatan: TIDAK mengecualikan 'SPLIT' karena di kasus kamu SPLIT tanpa pay-now
-            // memang menyimpan nilai "dibayar oleh tamu itu" di kolom amount, dan
-            // kamu ingin itu terhitung sebagai Amount Paid agregat.
+            // Pembayaran non-deposit (sum kolom amount pada payments, exclude jenis deposit)
             $excludeFromPaid = [
                 'DEPOSIT','DEPOSIT CARD','DEPOSIT_CARD','DEPOSIT CASH','DEPOSITCARD','DEPOSIT-CARD',
-                // JANGAN tulis 'SPLIT' di sini
             ];
-
             $reservationId = (int) ($resv->id ?? 0);
-
-            // Ambil semua payment non-deposit → pakai KOLOM amount saja untuk Amount Paid.
             $amountPaid = 0;
             if ($reservationId > 0) {
                 $amountPaid = (int) \App\Models\Payment::query()
@@ -506,27 +467,27 @@
                     ->where(function ($q) use ($excludeFromPaid) {
                         $q->whereNull('method')->orWhereNotIn('method', $excludeFromPaid);
                     })
-                    ->sum('amount');  // ← PENTING: hanya kolom amount
+                    ->sum('amount');
             }
 
-            // Deposit kartu sebagai pengurang tagihan (bukan "Amount Paid")
-            $effectiveDeposit = (int) $depositCardReservation;
+            // ======== KREDIT DEPOSIT (header + per-RG) ========
+            $effectiveDeposit = (int) $depositGrand;
 
-            // Hitung due/change berbasis billBase - deposit vs amountPaid
+            // Hitung sisa/tagihan
             $dueAfterDeposit = max(0, $billBase - $effectiveDeposit);
             $change          = max(0, $amountPaid - $dueAfterDeposit);
             $remaining       = max(0, $dueAfterDeposit - $amountPaid);
         @endphp
 
         <tr>
-            <td class="k" style="text-align:right">Amount Paid</td>
-            <td class="v">{{ $m($amountPaid) }}</td>
-        </tr>
+    <td class="k" style="text-align:right">Amount Paid</td>
+    <td class="v">{{ $m($amountPaid) }}</td>
+    </tr>
 
-        @if ($depositCardReservation > 0)
+        @if ($effectiveDeposit > 0)
             <tr>
-                <td class="k" style="text-align:right">(-) Deposit Card</td>
-                <td class="v">{{ $m($depositCardReservation) }}</td>
+                <td class="k" style="text-align:right">(-) Total Deposit</td>
+                <td class="v">{{ $m($effectiveDeposit) }}</td>
             </tr>
         @endif
 
@@ -543,9 +504,7 @@
         @endif
     @endif
 
-
     </table>
-
 
     <div class="line"></div>
 

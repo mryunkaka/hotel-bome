@@ -450,7 +450,7 @@ class ReservationForm
 
                                         // Sekalian isi deposit 50% dari rate
                                         $half = (float) $price * 0.5;
-                                        $set('deposit_room', $half);
+                                        $set('deposit_room', 0);
                                         $set('deposit_card', $half);
                                     })
                                     ->options(function (Get $get) {
@@ -679,7 +679,7 @@ class ReservationForm
                                     ->afterStateUpdated(function ($state, callable $set) {
                                         $rate = (float) ($state ?? 0);
                                         $half = $rate * 0.5;
-                                        $set('deposit_room', $half);
+                                        $set('deposit_room', 0);
                                         $set('deposit_card', $half);
                                     })
                                     // Disabled jika Charge To ≠ COMPLIMENTARY

@@ -208,13 +208,39 @@
             ? (($g->room?->room_no ?? '#'.$g->room_id).' — '.($g->room?->type ?? '-'))
             : ($hotel?->name ?? '-');
 
+        // Ambil earliest actual / expected dari RG yang ditampilkan
+        $earliestActualCin = optional(
+            $rgList->filter(fn ($x) => !empty($x->actual_checkin))
+                ->sortBy('actual_checkin')
+                ->first()
+        )->actual_checkin;
+
+        $earliestExpectedCin = optional(
+            $rgList->filter(fn ($x) => !empty($x->expected_checkin))
+                ->sortBy('expected_checkin')
+                ->first()
+        )->expected_checkin;
+
+        $latestActualCout = optional(
+            $rgList->filter(fn ($x) => !empty($x->actual_checkout))
+                ->sortByDesc('actual_checkout')
+                ->first()
+        )->actual_checkout;
+
+        $latestExpectedCout = optional(
+            $rgList->filter(fn ($x) => !empty($x->expected_checkout))
+                ->sortByDesc('expected_checkout')
+                ->first()
+        )->expected_checkout;
+
+        // Header: prioritas actual → expected → header
         $cin  = $isSingle
-            ? ($g->actual_checkin ?? $g->expected_checkin ?? $expected_arrival)
-            : $expected_arrival;
+            ? ($g->actual_checkin  ?? $g->expected_checkin  ?? $expected_arrival)
+            : ($earliestActualCin  ?? $earliestExpectedCin  ?? $expected_arrival);
 
         $cout = $isSingle
             ? ($g->actual_checkout ?? $g->expected_checkout ?? $expected_departure)
-            : $expected_departure;
+            : ($latestActualCout   ?? $latestExpectedCout   ?? $expected_departure);
 
         $payMethod = ucfirst($payment['method'] ?? strtolower($reservation?->method ?? 'personal'));
         $statusTxt = strtoupper($status ?? ($reservation?->status ?? 'CONFIRM'));

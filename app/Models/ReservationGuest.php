@@ -210,12 +210,15 @@ class ReservationGuest extends Model
             $m->recomputePeople();
         });
 
-        static::updating(function (self $m): void {
+        static::updating(function (ReservationGuest $m) {
             $rate = (float) ($m->room_rate ?? 0);
+
             if ($rate > 0) {
-                // hanya auto-isi jika kosong
-                if ((float) ($m->deposit_room ?? 0) === 0.0) $m->deposit_room = $rate * 0.5;
-                if ((float) ($m->deposit_card ?? 0) === 0.0) $m->deposit_card = $rate * 0.5;
+                // HANYA isi default saat KEDUANYA nol.
+                if ((float)($m->deposit_room ?? 0) === 0.0 && (float)($m->deposit_card ?? 0) === 0.0) {
+                    $m->deposit_card = $rate * 0.5; // default ke kartu
+                    $m->deposit_room = 0;           // pastikan room tetap 0
+                }
             }
 
             $m->hotel_id = Session::get('active_hotel_id')

@@ -49,13 +49,6 @@ class EditWalkin extends EditRecord
         // (opsional) set ulang expected_checkin/checkout di RG dari header
         $this->syncRgDatesFromHeader($reservation->id);
 
-        // Jika ini Save biasa (bukan dari tombol Check In) → reload halaman edit
-        // if (! $this->skipPostSaveRedirect) {
-        //     $this->redirect(
-        //         WalkinResource::getUrl('edit', ['record' => $reservation]),
-        //         navigate: true
-        //     );
-        // }
         $this->doCheckInAndRedirect();
     }
 
@@ -105,6 +98,9 @@ class EditWalkin extends EditRecord
             // preview room
             $data['pv_room_type'],
             $data['pv_room_status'],
+            $data['deposit_card'],
+            $data['deposit_room'],
+            $data['deposit_card_rg'],
         );
 
         // Simpan state terakhir untuk dipakai di afterSave()
@@ -266,12 +262,6 @@ class EditWalkin extends EditRecord
                 ]);
             }
 
-            // Konversi DP kamar → deposit card (default)
-            $reservation->forceFill([
-                'deposit_card' => (int) $reservation->deposit_card + (int) $reservation->deposit_room,
-                'deposit_room' => 0,
-            ])->save();
-
             // Set waktu check-in
             if (blank($rg->actual_checkin)) {
                 $now = now();
@@ -304,9 +294,8 @@ class EditWalkin extends EditRecord
         }
 
         // --- ganti 1 baris di akhir method doCheckInAndRedirect() sebelum redirect ---
-        $printUrl = url('/admin/reservation-guests/' . $rg->getKey() . '/print');
+        $printUrl = url('/admin/reservation-guests/' . $rg->getKey() . '/print?mode=single');
         $this->js("window.open('{$printUrl}', '_blank', 'noopener,noreferrer');");
-
 
         // Redirect ke index RG (opsional)
         $url = ReservationGuestResource::getUrl('index');
@@ -349,12 +338,28 @@ class EditWalkin extends EditRecord
             $roomRate = (int) (Room::whereKey($roomId)->value('price') ?? 0);
         }
 
+        // Ambil deposit card dari form (UI-only), sanitasi string "175.000" → 175000
+        $dcRaw = data_get($form, 'deposit_card');
+        if (is_string($dcRaw)) {
+            $dcSan = preg_replace('/[^\d]/', '', $dcRaw);
+            $depositCard = (int) ($dcSan === '' ? 0 : $dcSan);
+        } else {
+            $depositCard = (int) ($dcRaw ?? 0);
+        }
+
+        // Jika kosong, default 50% dari room_rate (kecuali complimentary memang 0)
+        if ($depositCard === 0 && $roomRate > 0) {
+            $depositCard = (int) round($roomRate * 0.5);
+        }
+
         $payload = [
             'hotel_id'          => $hid,
             'reservation_id'    => $reservationId,
             'guest_id'          => data_get($form, 'guest_id'),
             'room_id'           => $roomId,
             'room_rate'         => $roomRate,
+            'deposit_card'      => max(0, $depositCard),
+            'deposit_room'      => 0, // kamu sudah tidak pakai DP kamar → nolkan saja
             'male'              => (int) (data_get($form, 'male') ?? 1),
             'female'            => (int) (data_get($form, 'female') ?? 0),
             'children'          => (int) (data_get($form, 'children') ?? 0),
@@ -371,8 +376,7 @@ class EditWalkin extends EditRecord
         ];
 
         if ($rg) {
-            // HANYA update kolom2 aman; TIDAK menyentuh actual_checkin
-            $rg->fill($payload)->save();
+            $rg->forceFill($payload)->save();
         } else {
             ReservationGuest::create($payload);
         }

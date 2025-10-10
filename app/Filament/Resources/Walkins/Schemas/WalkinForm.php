@@ -5,7 +5,6 @@ namespace App\Filament\Resources\Walkins\Schemas;
 use Carbon\Carbon;
 use App\Models\Room;
 use App\Models\Guest;
-use App\Models\Reservation;
 use Filament\Support\RawJs;
 use Filament\Schemas\Schema;
 use App\Models\ReservationGroup;
@@ -14,6 +13,7 @@ use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Schemas\Components\Grid;
 use Illuminate\Database\Query\Builder;
+use Filament\Forms\Components\Textarea;
 use Illuminate\Support\Facades\Session;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
@@ -165,61 +165,17 @@ class WalkinForm
 
                         TextInput::make('pv_id_card')->label('ID Card')->disabled()->dehydrated(false)->columnSpan(9),
 
-                        // Row: Birth place/date
-                        TextInput::make('pv_birth_place')->label('Birth Place & Date')
-                            ->placeholder('Birth Place')->disabled()->dehydrated(false)->columnSpan(6),
-                        TextInput::make('pv_birth_date')->label('Birth Date')
-                            ->placeholder('yyyy-mm-dd')->disabled()->dehydrated(false)->columnSpan(6),
-
-                        // Row: Issued place/date
-                        TextInput::make('pv_issued_place')->label('ID Issued')
-                            ->placeholder('Issued Place')->disabled()->dehydrated(false)->columnSpan(6),
-                        TextInput::make('pv_issued_date')->label('Issued Date')
-                            ->placeholder('yyyy-mm-dd')->disabled()->dehydrated(false)->columnSpan(6),
                     ]),
                 ]),
 
             Section::make('Walk Detail')
                 ->schema([
                     Grid::make(12)->schema([
-                        // Row: POV + Charge To
-                        Select::make('pov')->label('Purpose of Visit')
-                            ->options([
-                                'BUSINESS' => 'Business',
-                                'OFFICIAL' => 'Official',
-                                'TRANSIENT' => 'Transient',
-                                'VACATION' => 'Vacation',
-                            ])->default('BUSINESS')->columnSpan(6),
-
-                        Select::make('person')->label('Charge To')
-                            ->options([
-                                'PERSONAL ACCOUNT' => 'Personal Account',
-                                'COMPANY ACCOUNT' => 'Company Account',
-                                'TRAVEL AGENT' => 'Travel Agent',
-                                'OL TRAVEL AGENT' => 'OL Travel Agent',
-                                'COMPLIMENTARY' => 'Complimentary',
-                            ])->default('PERSONAL ACCOUNT')->columnSpan(6),
-
-                        // Row: Nights + Arrival
-                        TextInput::make('nights')->label('Nights')
-                            ->numeric()->minValue(1)->default(1)->required()
-                            ->live(onBlur: true)
-                            ->afterStateHydrated(fn($s, $set, $get) => self::syncDeparture($set, $get))
-                            ->afterStateUpdated(fn($s, $set, $get) => self::syncDeparture($set, $get))
-                            ->columnSpan(4),
-
-                        DateTimePicker::make('expected_arrival')->label('Arrival')
-                            ->required()->default(fn() => now()->setTime(13, 0))->seconds(false)
-                            ->columnSpan(8),
-
-                        Hidden::make('expected_departure')->dehydrated()
-                            ->afterStateHydrated(fn($s, $set, $get) => self::syncDeparture($set, $get)),
-
                         // Row: Group + preview phone/email
                         Select::make('group_id')
                             ->label('Group')
                             ->relationship(
-                                name: 'group',           // relasi di model Reservation -> group()
+                                name: 'group',
                                 titleAttribute: 'name',
                                 modifyQueryUsing: function (Builder $q) {
                                     $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
@@ -230,8 +186,6 @@ class WalkinForm
                             ->searchable()
                             ->preload()
                             ->live()
-
-                            // preview phone/email
                             ->afterStateHydrated(function ($state, callable $set) {
                                 if ($state && ($grp = ReservationGroup::find($state))) {
                                     $set('pv_group_phone', $grp->phone ?: null);
@@ -247,8 +201,6 @@ class WalkinForm
                                     $set('pv_group_email', null);
                                 }
                             })
-
-                            // form tambah group tetap jalan
                             ->createOptionForm([
                                 \Filament\Forms\Components\TextInput::make('name')->label('Group Name')->required(),
                                 \Filament\Forms\Components\TextInput::make('address')->label('Address'),
@@ -265,6 +217,29 @@ class WalkinForm
 
                         TextInput::make('pv_group_email')->label('Group Email')
                             ->disabled()->dehydrated(false)->columnSpan(6),
+                        // Row: POV + Charge To
+                        Select::make('pov')->label('Purpose of Visit')
+                            ->options([
+                                'BUSINESS' => 'Business',
+                                'OFFICIAL' => 'Official',
+                                'TRANSIENT' => 'Transient',
+                                'VACATION' => 'Vacation',
+                            ])->default('BUSINESS')->columnSpan(12),
+
+                        // Row: Nights + Arrival
+                        DateTimePicker::make('expected_arrival')->label('Arrival')
+                            ->required()->default(fn() => now()->setTime(13, 0))->seconds(false)
+                            ->columnSpan(8),
+
+                        TextInput::make('nights')->label('Nights')
+                            ->numeric()->minValue(1)->default(1)->required()
+                            ->live(onBlur: true)
+                            ->afterStateHydrated(fn($s, $set, $get) => self::syncDeparture($set, $get))
+                            ->afterStateUpdated(fn($s, $set, $get) => self::syncDeparture($set, $get))
+                            ->columnSpan(4),
+
+                        Hidden::make('expected_departure')->dehydrated()
+                            ->afterStateHydrated(fn($s, $set, $get) => self::syncDeparture($set, $get)),
 
                         // Row: C/I Option
                         Select::make('option')->label('C/I Option')
@@ -276,16 +251,7 @@ class WalkinForm
                                 'OTA' => 'OTA',
                                 'WEEKLY' => 'WEEKLY',
                                 'MONTHLY' => 'MONTHLY',
-                            ])->default('WALKIN')->required()->columnSpan(12),
-
-                        TextInput::make('deposit_card')
-                            ->label('Deposit Card')
-                            ->mask(RawJs::make('$money($input)'))
-                            ->stripCharacters(',')
-                            ->numeric()
-                            ->default(0)
-                            ->columnSpan(6)
-                            ->helperText('Deposit Card saat membuat Walkin.'),
+                            ])->default('WALKIN')->required()->columnSpan(6),
 
                         Select::make('id_tax')
                             ->label('Tax')
@@ -360,30 +326,29 @@ class WalkinForm
                             })
                             ->afterStateHydrated(function ($state, callable $set) {
                                 if ($state && ($room = Room::find($state))) {
-                                    // set nilai yang disimpan
                                     $set('room_rate', (int) ($room->price ?? 0));
-                                    // preview (UI only)
                                     $set('pv_room_type',   $room->type   ?: '-');
                                     $set('pv_room_status', $room->status ?: null);
+                                    // deposit card auto 50% dari rate
+                                    $set('deposit_card', (float) ($room->price ?? 0) * 0.5);
                                 }
                             })
                             ->afterStateUpdated(function ($state, callable $set) {
                                 if ($state && ($room = Room::find($state))) {
-                                    // set nilai yang disimpan
                                     $set('room_rate', (int) ($room->price ?? 0));
-                                    // preview (UI only)
                                     $set('pv_room_type',   $room->type   ?: '-');
                                     $set('pv_room_status', $room->status ?: null);
+                                    $set('deposit_card', (float) ($room->price ?? 0) * 0.5);
                                 } else {
-                                    // clear preview
                                     $set('room_rate', null);
                                     $set('pv_room_type', null);
                                     $set('pv_room_status', null);
+                                    $set('deposit_card', null);
                                 }
                             })
                             ->columnSpan(12),
 
-                        // RATE (DISIMPAN)
+                        // RATE (DISIMPAN) — dikunci kecuali Charge To = COMPLIMENTARY
                         TextInput::make('room_rate')
                             ->label('Rate')
                             ->numeric()
@@ -391,6 +356,14 @@ class WalkinForm
                             ->stripCharacters(',')
                             ->placeholder('Auto from room')
                             ->minValue(0)
+                            ->live()
+                            ->afterStateUpdated(function ($state, callable $set) {
+                                $rate = (float) ($state ?? 0);
+                                $half = $rate * 0.5;
+                                $set('deposit_card', $half);
+                            })
+                            ->disabled(fn(Get $get) => ($get('person') ?? '') !== 'COMPLIMENTARY')
+                            ->dehydrated(true)
                             ->columnSpan(4),
 
                         // TYPE (PREVIEW, TIDAK DI-SAVE)
@@ -407,19 +380,48 @@ class WalkinForm
                             ->dehydrated(false)
                             ->columnSpan(4),
 
+                        Select::make('person')->label('Charge To')
+                            ->options([
+                                'PERSONAL ACCOUNT' => 'Personal Account',
+                                'COMPANY ACCOUNT'  => 'Company Account',
+                                'TRAVEL AGENT'     => 'Travel Agent',
+                                'OL TRAVEL AGENT'  => 'OL Travel Agent',
+                                'COMPLIMENTARY'    => 'Complimentary',
+                            ])
+                            ->default('PERSONAL ACCOUNT')
+                            ->live()
+                            ->afterStateHydrated(function ($state, callable $set, Get $get) {
+                                $roomId = (int) ($get('room_id') ?? 0);
+                                if ($state === 'COMPLIMENTARY') {
+                                    $set('room_rate', 0);
+                                    $set('deposit_card', 0);
+                                    return;
+                                }
+                                if ($roomId > 0) {
+                                    $price = \App\Models\Room::whereKey($roomId)->value('price') ?? 0;
+                                    $set('room_rate', (int) $price);
+                                    $set('deposit_card', (float) $price * 0.5);
+                                }
+                            })
+                            ->afterStateUpdated(function ($state, callable $set, Get $get) {
+                                if ($state === 'COMPLIMENTARY') {
+                                    $set('room_rate', 0);
+                                    $set('deposit_card', 0);
+                                    return;
+                                }
+                                $roomId = (int) ($get('room_id') ?? 0);
+                                if ($roomId > 0) {
+                                    $price = \App\Models\Room::whereKey($roomId)->value('price') ?? 0;
+                                    $set('room_rate', (int) $price);
+                                    $set('deposit_card', (float) $price * 0.5);
+                                }
+                            })
+                            ->columnSpan(6),
+
                         Select::make('breakfast')
                             ->label('Breakfast')
                             ->options(['Yes' => 'Yes', 'No' => 'No'])
                             ->default('Yes')
-                            ->columnSpan(6),
-
-                        TextInput::make('discount_percent')
-                            ->label('Discount (%)')
-                            ->numeric()
-                            ->step('0.01')
-                            ->minValue(0)
-                            ->maxValue(100)
-                            ->default(0)
                             ->columnSpan(6),
 
                         TextInput::make('male')
@@ -447,16 +449,41 @@ class WalkinForm
                             ->default(1)
                             ->dehydrated(),
 
+                        TextInput::make('discount_percent')
+                            ->label('Discount (%)')
+                            ->numeric()
+                            ->step('0.01')
+                            ->minValue(0)
+                            ->maxValue(100)
+                            ->default(0)
+                            ->columnSpan(4),
+
                         TextInput::make('extra_bed')
                             ->label('Ektra Bed')
                             ->numeric()
                             ->default(0)
                             ->columnSpan(4),
 
-                        TextInput::make('note')
+                        TextInput::make('deposit_card_rg')
+                            ->visible(false) // hanya supaya tidak bentrok dengan field header 'deposit_card'
+                            ->dehydrated(false),
+
+                        // Section: Information Rate
+                        TextInput::make('deposit_card')
+                            ->label('Deposit Card (RG)')
+                            ->numeric()
+                            ->minValue(0)
+                            ->default(fn(Get $get) => (float) ($get('room_rate') ?? 0) * 0.5)
+                            ->dehydrated(false)   // ⬅️ PENTING: jangan kirim ke model Reservation!
+                            ->columnSpan(4),
+
+                        Textarea::make('note')
                             ->label('Note')
-                            ->maxLength(150)
-                            ->columnSpan(8),
+                            ->placeholder('Catatan khusus tamu / permintaan...')
+                            ->autosize()
+                            ->rows(3)
+                            ->maxLength(500)
+                            ->columnSpan(12),
                     ]),
                 ]),
 
@@ -512,6 +539,7 @@ class WalkinForm
         $departure = $arrival->copy()->startOfDay()->addDays($nights)->setTime(12, 0);
         $set('expected_departure', $departure);
     }
+
     // ===== Helper kecil agar hook singkat (logika tetap) =====
     protected static function fillGuestPreviewState(\App\Models\Guest $g, callable $set): void
     {

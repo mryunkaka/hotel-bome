@@ -13,25 +13,20 @@ use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use App\Models\AccountLedger;
 use App\Models\MinibarReceipt;
-use Illuminate\Support\Carbon;
 use App\Models\ReservationGuest;
 use App\Support\ReservationMath;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Grid;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\ViewField;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\Utilities\Get;
+use Illuminate\Support\Facades\Schema as DBSchema;
 use Filament\Schemas\Components\Actions as SchemaActions;
-use Illuminate\Support\Facades\Schema as DBSchema; // ⬅️ penting: aliaskan ke DBSchema
-use Illuminate\Support\Carbon as _Carbon;
-use App\Support\ReservationMath as _Math;
+use Filament\Schemas\Components\Utilities\Get as SchemaGet;
 
 final class ReservationGuestCheckOutForm
 {
@@ -156,137 +151,53 @@ final class ReservationGuestCheckOutForm
                                     $alreadySplit = \App\Models\Payment::query()
                                         ->where('reservation_id', $record->reservation_id)
                                         ->where('reservation_guest_id', $record->id)
-                                        // kalau hanya mau yang berasal dari split, aktifkan baris di bawah:
-                                        // ->where('method', 'SPLIT')
                                         ->exists();
 
                                     if ($alreadySplit) {
                                         $url = route('reservation-guests.bill', $record) . '?mode=single';
                                         $livewire->js("window.open('{$url}', '_blank', 'noopener,noreferrer')");
-                                        $action->halt(); // <- hentikan mounting, modal tidak jadi dibuka
+                                        $action->halt();
+                                        return;
                                     }
+
+                                    // seed nilai awal - gunakan fungsi yang SAMA dengan blade view
+                                    $actual = self::calculateSplitAmount($record);
+
+                                    $action->fillForm([
+                                        'actual_amount' => $actual,
+                                        'amount'        => $actual,
+                                        'method'        => null,
+                                        'bank_id'       => null,
+                                        'note'          => null,
+                                    ]);
                                 })
                                 ->schema([
-                                    // ===== Show porsi tagihan (read-only)
-                                    \Filament\Forms\Components\TextInput::make('actual_amount_view')
+                                    // ==== DISPLAY actual (read-only, menggunakan Placeholder) ====
+                                    \Filament\Forms\Components\Placeholder::make('actual_amount_display')
                                         ->label('Actual Amount (IDR)')
-                                        ->disabled()
-                                        ->dehydrated(false)
-                                        ->mask(\Filament\Support\RawJs::make('$money($input)'))
-                                        ->extraInputAttributes(['inputmode' => 'numeric'])
-                                        ->afterStateHydrated(function ($set, \App\Models\ReservationGuest $record) {
-                                            $tz  = 'Asia/Makassar';
-                                            $res = $record->reservation;
-
-                                            // Ambil SEMUA RG & peta total minibar semua RG (sekali query) — sama seperti bill
-                                            $allGuests = $res ? $res->reservationGuests()->orderBy('id')->get() : collect();
-                                            $ids       = $allGuests->pluck('id')->all();
-
-                                            $minibarMap = [];
-                                            if (! empty($ids)) {
-                                                $minibarMap = \App\Models\MinibarReceipt::query()
-                                                    ->whereIn('reservation_guest_id', $ids)
-                                                    ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
-                                                    ->groupBy('reservation_guest_id')
-                                                    ->pluck('sum_total', 'reservation_guest_id')
-                                                    ->toArray();
-                                            }
-
-                                            // === BASE tamu INI (harus SAMA persis dengan bill.blade.php) ===
-                                            $in  = $record->actual_checkin ?: $record->expected_checkin;
-                                            $out = $record->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-                                            $n   = \App\Support\ReservationMath::nights($in, $out, 1);
-
-                                            $rate    = (float) \App\Support\ReservationMath::basicRate($record);
-                                            $discPct = (float) ($record->discount_percent ?? 0);
-                                            $discAmt = (int) round(($rate * $discPct) / 100);
-                                            $after   = max(0, $rate - $discAmt);
-
-                                            $charge   = (int) ($record->charge ?? 0);
-                                            $extra    = (int) ($record->extra_bed_total ?? ((int) ($record->extra_bed ?? 0) * 100_000));
-                                            $mbSvc    = (int) ($minibarMap[$record->id] ?? 0); // minibar = "Service"
-                                            $pen      = \App\Support\ReservationMath::latePenalty(
-                                                $record->expected_checkin ?: ($record->reservation?->expected_arrival),
-                                                $record->actual_checkin,
-                                                $rate,
-                                                ['tz' => $tz],
-                                            );
-                                            $penalty  = (int) ($pen['amount'] ?? 0);
-
-                                            $baseThis = (int) ($after * $n + $charge + $mbSvc + $extra + $penalty);
-
-                                            // === totalBaseAll dengan rumus yang SAMA persis seperti di bill ===
-                                            $totalBaseAll = 0;
-                                            foreach ($allGuests as $rg) {
-                                                $inG  = $rg->actual_checkin ?: $rg->expected_checkin;
-                                                $outG = $rg->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-                                                $nG   = \App\Support\ReservationMath::nights($inG, $outG, 1);
-
-                                                $rateG    = (float) \App\Support\ReservationMath::basicRate($rg);
-                                                $discPctG = (float) ($rg->discount_percent ?? 0);
-                                                $discAmtG = (int) round(($rateG * $discPctG) / 100);
-                                                $afterG   = max(0, $rateG - $discAmtG);
-
-                                                $chargeG = (int) ($rg->charge ?? 0);
-                                                $extraG  = (int) ($rg->extra_bed_total ?? ((int) ($rg->extra_bed ?? 0) * 100_000));
-                                                $mbSvcG  = (int) ($minibarMap[$rg->id] ?? 0);
-                                                $penG    = \App\Support\ReservationMath::latePenalty(
-                                                    $rg->expected_checkin ?: ($rg->reservation?->expected_arrival),
-                                                    $rg->actual_checkin,
-                                                    $rateG,
-                                                    ['tz' => $tz],
-                                                );
-                                                $penaltyG = (int) ($penG['amount'] ?? 0);
-
-                                                $baseG = (int) ($afterG * $nG + $chargeG + $mbSvcG + $extraG + $penaltyG);
-                                                $totalBaseAll += $baseG;
-                                            }
-
-                                            $taxPctReservation = (float) ($res?->tax?->percent ?? 0);
-
-                                            // === Pajak total reservation → bagi rata (identik dengan bill) ===
-                                            $participants = max(1, (int) $allGuests->count());
-                                            if ($participants <= 0) {
-                                                $participants = max(1, (int) ($res?->num_guests ?? 1));
-                                            }
-
-                                            $totalTaxAll  = (int) round(($totalBaseAll * $taxPctReservation) / 100);
-                                            $taxPerPerson = intdiv($totalTaxAll, $participants);
-                                            $remainder    = $totalTaxAll - ($taxPerPerson * $participants);
-
-                                            if ($remainder > 0 && $res) {
-                                                $maxId = (int) $allGuests->max('id');
-                                                if ((int) $record->id === $maxId) {
-                                                    $taxPerPerson += $remainder;
-                                                }
-                                            }
-
-                                            // === Actual (untuk modal) = BASE tamu ini + share pajak global
-                                            $actual = (int) $baseThis + (int) $taxPerPerson;
-
-                                            $set('actual_amount_view', $actual);
-                                            $set('actual_amount', $actual);
-                                            $set('amount', $actual); // default Amount = Actual
+                                        ->content(function (\App\Models\ReservationGuest $record) {
+                                            $amount = self::calculateSplitAmount($record);
+                                            return 'Rp ' . number_format($amount, 0, ',', '.');
                                         }),
 
-                                    \Filament\Forms\Components\Hidden::make('actual_amount'),
+                                    \Filament\Forms\Components\Hidden::make('actual_amount')
+                                        ->default(fn(\App\Models\ReservationGuest $record) => self::calculateSplitAmount($record)),
 
-                                    // ===== Toggle pay now
-                                    \Filament\Forms\Components\Toggle::make('record_payment_now')
-                                        ->label('Record payment now (post to ledger)')
-                                        ->inline(false)
-                                        ->live(),
-
-                                    // ===== Fields saat pay now
+                                    // ==== Amount yang dibayar (tetap bisa diedit) ====
                                     \Filament\Forms\Components\TextInput::make('amount')
                                         ->label('Amount (IDR)')
                                         ->numeric()
                                         ->minValue(0)
+                                        ->default(fn(\App\Models\ReservationGuest $record) => self::calculateSplitAmount($record))
                                         ->mask(\Filament\Support\RawJs::make('$money($input)'))
                                         ->stripCharacters(',')
-                                        ->visible(fn(Get $get) => (bool) $get('record_payment_now'))
-                                        ->required(fn(Get $get) => (bool) $get('record_payment_now'))
-                                        ->dehydrated(fn(Get $get) => (bool) $get('record_payment_now')),
+                                        ->required()
+                                        ->afterStateHydrated(function ($state, callable $set, callable $get, \App\Models\ReservationGuest $record) {
+                                            if (blank($state)) {
+                                                $fallback = self::calculateSplitAmount($record);
+                                                $set('amount', $fallback);
+                                            }
+                                        }),
 
                                     \Filament\Forms\Components\Select::make('method')
                                         ->label('Method')
@@ -296,194 +207,52 @@ final class ReservationGuestCheckOutForm
                                             'TRANSFER' => 'Transfer',
                                             'OTHER'    => 'Other',
                                         ])
-                                        ->visible(fn(Get $get) => (bool) $get('record_payment_now'))
-                                        ->required(fn(Get $get) => (bool) $get('record_payment_now'))
-                                        ->live()
-                                        ->dehydrated(fn(Get $get) => (bool) $get('record_payment_now')),
+                                        ->required()
+                                        ->reactive()
+                                        ->afterStateHydrated(function ($state) {}),
 
                                     \Filament\Forms\Components\Select::make('bank_id')
                                         ->label('Bank Account')
-                                        ->options(function (\App\Models\ReservationGuest $record) {
-                                            return \App\Models\Bank::query()
+                                        ->options(
+                                            fn(\App\Models\ReservationGuest $record) =>
+                                            \App\Models\Bank::query()
                                                 ->where('hotel_id', $record->hotel_id)
-                                                ->orderBy('name')->pluck('name', 'id');
-                                        })
+                                                ->orderBy('name')
+                                                ->pluck('name', 'id')
+                                        )
                                         ->searchable()->preload()->native(false)
                                         ->visible(
-                                            fn(Get $get) =>
-                                            (bool) $get('record_payment_now') && in_array($get('method'), ['CARD', 'TRANSFER'], true)
+                                            fn(\Filament\Schemas\Components\Utilities\Get $get) =>
+                                            in_array($get('method'), ['CARD', 'TRANSFER'], true)
                                         )
                                         ->required(
-                                            fn(Get $get) =>
-                                            (bool) $get('record_payment_now') && in_array($get('method'), ['CARD', 'TRANSFER'], true)
+                                            fn(\Filament\Schemas\Components\Utilities\Get $get) =>
+                                            in_array($get('method'), ['CARD', 'TRANSFER'], true)
                                         )
-                                        ->dehydrated(
-                                            fn(Get $get) =>
-                                            (bool) $get('record_payment_now') && in_array($get('method'), ['CARD', 'TRANSFER'], true)
-                                        )
-                                        ->helperText('Wajib diisi untuk CARD/TRANSFER.'),
+                                        ->helperText('Wajib diisi untuk CARD/TRANSFER.')
+                                        ->afterStateHydrated(function ($state) {}),
 
-                                    \Filament\Forms\Components\Textarea::make('note')
-                                        ->label('Note')
-                                        ->rows(2)
-                                        ->visible(fn(Get $get) => (bool) $get('record_payment_now'))
-                                        ->dehydrated(fn(Get $get) => (bool) $get('record_payment_now')),
+                                    \Filament\Forms\Components\Textarea::make('note')->label('Note')->rows(2),
                                 ])
                                 ->action(function (array $data, \App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
 
-                                    // Jika sudah checkout: JANGAN buat payment baru → hanya buka bill single.
                                     if (filled($record->actual_checkout)) {
                                         $livewire->js("window.open('" . route('reservation-guests.bill', $record) . "?mode=single', '_blank', 'noopener,noreferrer')");
                                         return;
                                     }
 
-                                    // ===== Recompute actual_amount jika kosong/0 (safety server-side)
-                                    $actual = (int) ($data['actual_amount'] ?? 0);
+                                    $actual = (int)($data['actual_amount'] ?? 0);
                                     if ($actual <= 0) {
-                                        $tz  = 'Asia/Makassar';
-                                        $res = $record->reservation;
-
-                                        $allGuests = $res ? $res->reservationGuests()->orderBy('id')->get() : collect();
-                                        $ids       = $allGuests->pluck('id')->all();
-
-                                        $minibarMap = [];
-                                        if (! empty($ids)) {
-                                            $minibarMap = \App\Models\MinibarReceipt::query()
-                                                ->whereIn('reservation_guest_id', $ids)
-                                                ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
-                                                ->groupBy('reservation_guest_id')
-                                                ->pluck('sum_total', 'reservation_guest_id')
-                                                ->toArray();
-                                        }
-
-                                        // BASE tamu INI
-                                        $in  = $record->actual_checkin ?: $record->expected_checkin;
-                                        $out = $record->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-                                        $n   = \App\Support\ReservationMath::nights($in, $out, 1);
-
-                                        $rate    = (float) \App\Support\ReservationMath::basicRate($record);
-                                        $discPct = (float) ($record->discount_percent ?? 0);
-                                        $discAmt = (int) round(($rate * $discPct) / 100);
-                                        $after   = max(0, $rate - $discAmt);
-
-                                        $charge  = (int) ($record->charge ?? 0);
-                                        $extra   = (int) ($record->extra_bed_total ?? ((int) ($record->extra_bed ?? 0) * 100_000));
-                                        $mbSvc   = (int) ($minibarMap[$record->id] ?? 0);
-                                        $pen     = \App\Support\ReservationMath::latePenalty(
-                                            $record->expected_checkin ?: ($record->reservation?->expected_arrival),
-                                            $record->actual_checkin,
-                                            $rate,
-                                            ['tz' => $tz],
-                                        );
-                                        $penalty = (int) ($pen['amount'] ?? 0);
-
-                                        $baseThis = (int) ($after * $n + $charge + $mbSvc + $extra + $penalty);
-
-                                        // totalBaseAll
-                                        $totalBaseAll = 0;
-                                        foreach ($allGuests as $rg) {
-                                            $inG  = $rg->actual_checkin ?: $rg->expected_checkin;
-                                            $outG = $rg->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-                                            $nG   = \App\Support\ReservationMath::nights($inG, $outG, 1);
-
-                                            $rateG    = (float) \App\Support\ReservationMath::basicRate($rg);
-                                            $discPctG = (float) ($rg->discount_percent ?? 0);
-                                            $discAmtG = (int) round(($rateG * $discPctG) / 100);
-                                            $afterG   = max(0, $rateG - $discAmtG);
-
-                                            $chargeG = (int) ($rg->charge ?? 0);
-                                            $extraG  = (int) ($rg->extra_bed_total ?? ((int) ($rg->extra_bed ?? 0) * 100_000));
-                                            $mbSvcG  = (int) ($minibarMap[$rg->id] ?? 0);
-                                            $penG    = \App\Support\ReservationMath::latePenalty(
-                                                $rg->expected_checkin ?: ($rg->reservation?->expected_arrival),
-                                                $rg->actual_checkin,
-                                                $rateG,
-                                                ['tz' => $tz],
-                                            );
-                                            $penaltyG = (int) ($penG['amount'] ?? 0);
-
-                                            $baseG = (int) ($afterG * $nG + $chargeG + $mbSvcG + $extraG + $penaltyG);
-                                            $totalBaseAll += $baseG;
-                                        }
-
-                                        $taxPctReservation = (float) ($res?->tax?->percent ?? 0);
-                                        $participants      = max(1, (int) $allGuests->count());
-                                        if ($participants <= 0) {
-                                            $participants = max(1, (int) ($res?->num_guests ?? 1));
-                                        }
-
-                                        $totalTaxAll  = (int) round(($totalBaseAll * $taxPctReservation) / 100);
-                                        $taxPerPerson = intdiv($totalTaxAll, $participants);
-                                        $remainder    = $totalTaxAll - ($taxPerPerson * $participants);
-
-                                        if ($remainder > 0 && $res) {
-                                            $maxId = (int) $allGuests->max('id');
-                                            if ((int) $record->id === $maxId) {
-                                                $taxPerPerson += $remainder;
-                                            }
-                                        }
-
-                                        $actual = (int) $baseThis + (int) $taxPerPerson;
+                                        $actual = self::calculateSplitAmount($record);
                                     }
 
-                                    // ===== MODE 1: Split only (marker, tanpa posting ledger)
-                                    if (empty($data['record_payment_now'])) {
-                                        $res = $record->reservation;
-                                        if (! $res) {
-                                            \Filament\Notifications\Notification::make()->title('Reservation tidak ditemukan.')->warning()->send();
-                                            return;
-                                        }
-
-                                        // tandai checkout pada RG ini (header reservation tidak disentuh)
-                                        $record->forceFill([
-                                            'actual_checkout' => now(),
-                                            'bill_closed_at'  => now(),
-                                        ])->save();
-
-                                        \App\Models\Payment::updateOrCreate(
-                                            ['reservation_guest_id' => $record->id, 'method' => 'SPLIT'],
-                                            [
-                                                'hotel_id'       => (int) $res->hotel_id,
-                                                'reservation_id' => (int) $res->id,
-                                                'amount'         => $actual,
-                                                'actual_amount'  => $actual,
-                                                'payment_date'   => now(),
-                                                'notes'          => 'Auto entry (Split Bill)',
-                                                'created_by'     => \Illuminate\Support\Facades\Auth::id(),
-                                            ]
-                                        );
-
-                                        // Mark minibar paid (sekali update – hindari when() on int)
-                                        $now    = now();
-                                        $update = [];
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) $update['is_paid'] = true;
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'status'))  $update['status']  = 'PAID';
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_at')) $update['paid_at'] = $now;
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_by')) $update['paid_by'] = \Illuminate\Support\Facades\Auth::id();
-                                        if (! empty($update)) {
-                                            \App\Models\MinibarReceipt::where('reservation_guest_id', $record->id)->update($update);
-                                        }
-
-                                        // room → VD
-                                        if ($record->room_id) {
-                                            \App\Models\Room::whereKey($record->room_id)->update([
-                                                'status'            => \App\Models\Room::ST_VD,
-                                                'status_changed_at' => $now,
-                                            ]);
-                                        }
-
-                                        $livewire->js("window.open('" . route('reservation-guests.bill', $record) . "?mode=single', '_blank', 'noopener,noreferrer')");
-                                        return;
-                                    }
-
-                                    // ===== MODE 2: Pay now + posting ke ledger (tetap sama)
                                     $res = $record->reservation;
                                     if (! $res) {
                                         \Filament\Notifications\Notification::make()->title('Reservation tidak ditemukan.')->warning()->send();
                                         return;
                                     }
 
-                                    $paid       = (int) ($data['amount'] ?? 0);
+                                    $paid = (int)($data['amount'] ?? 0);
                                     if ($paid < $actual) {
                                         \Filament\Notifications\Notification::make()
                                             ->title('Amount kurang dari porsi tagihan (split).')
@@ -514,15 +283,12 @@ final class ReservationGuestCheckOutForm
                                         default    => 'other',
                                     };
 
-                                    \Illuminate\Support\Facades\DB::transaction(function () use ($data, $record, $res, $methodForLedger, $bankId, $methodForm, $actual, $paid) {
-
+                                    DB::transaction(function () use ($data, $record, $res, $methodForLedger, $bankId, $methodForm, $actual, $paid) {
                                         $now = now();
-                                        $record->forceFill([
-                                            'actual_checkout' => $now,
-                                            'bill_closed_at'  => $now,
-                                        ])->save();
 
-                                        $payment = \App\Models\Payment::create([
+                                        $record->forceFill(['actual_checkout' => $now, 'bill_closed_at' => $now])->save();
+
+                                        $payment = Payment::create([
                                             'hotel_id'             => (int) $res->hotel_id,
                                             'reservation_id'       => (int) $res->id,
                                             'reservation_guest_id' => (int) $record->id,
@@ -532,7 +298,7 @@ final class ReservationGuestCheckOutForm
                                             'method'               => $methodForm,
                                             'payment_date'         => now(),
                                             'notes'                => (string) ($data['note'] ?? 'Split Bill (pay now)'),
-                                            'created_by'           => \Illuminate\Support\Facades\Auth::id(),
+                                            'created_by'           => Auth::id(),
                                         ]);
 
                                         $entryDate   = now()->toDateString();
@@ -542,7 +308,7 @@ final class ReservationGuestCheckOutForm
                                         $amountInNet = min($paid, $actual);
 
                                         if ($methodForLedger === 'cash' || empty($bankId)) {
-                                            \App\Models\AccountLedger::create([
+                                            AccountLedger::create([
                                                 'hotel_id'        => (int) $res->hotel_id,
                                                 'ledger_type'     => 'room',
                                                 'reference_table' => 'payments',
@@ -555,10 +321,10 @@ final class ReservationGuestCheckOutForm
                                                 'description'     => $desc . ' (receipt)',
                                                 'is_posted'       => true,
                                                 'posted_at'       => now(),
-                                                'posted_by'       => \Illuminate\Support\Facades\Auth::id(),
+                                                'posted_by'       => Auth::id(),
                                             ]);
                                             if ($change > 0) {
-                                                \App\Models\AccountLedger::create([
+                                                AccountLedger::create([
                                                     'hotel_id'        => (int) $res->hotel_id,
                                                     'ledger_type'     => 'room',
                                                     'reference_table' => 'payments',
@@ -571,11 +337,11 @@ final class ReservationGuestCheckOutForm
                                                     'description'     => $desc . ' (change returned)',
                                                     'is_posted'       => true,
                                                     'posted_at'       => now(),
-                                                    'posted_by'       => \Illuminate\Support\Facades\Auth::id(),
+                                                    'posted_by'       => Auth::id(),
                                                 ]);
                                             }
                                         } else {
-                                            \App\Models\BankLedger::create([
+                                            BankLedger::create([
                                                 'hotel_id'        => (int) $res->hotel_id,
                                                 'bank_id'         => (int) $bankId,
                                                 'deposit'         => $amountInNet,
@@ -588,10 +354,10 @@ final class ReservationGuestCheckOutForm
                                                 'reference_id'    => (int) $payment->id,
                                                 'is_posted'       => true,
                                                 'posted_at'       => now(),
-                                                'posted_by'       => \Illuminate\Support\Facades\Auth::id(),
+                                                'posted_by'       => Auth::id(),
                                             ]);
                                             if ($change > 0) {
-                                                \App\Models\BankLedger::create([
+                                                BankLedger::create([
                                                     'hotel_id'        => (int) $res->hotel_id,
                                                     'bank_id'         => (int) $bankId,
                                                     'deposit'         => 0,
@@ -604,25 +370,23 @@ final class ReservationGuestCheckOutForm
                                                     'reference_id'    => (int) $payment->id,
                                                     'is_posted'       => true,
                                                     'posted_at'       => now(),
-                                                    'posted_by'       => \Illuminate\Support\Facades\Auth::id(),
+                                                    'posted_by'       => Auth::id(),
                                                 ]);
                                             }
                                         }
 
-                                        // Mark minibar paid (sekali update – FIX)
                                         $update = [];
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) $update['is_paid'] = true;
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'status'))  $update['status']  = 'PAID';
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_at')) $update['paid_at'] = $now;
-                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_by')) $update['paid_by'] = \Illuminate\Support\Facades\Auth::id();
+                                        if (DBSchema::hasColumn('minibar_receipts', 'is_paid')) $update['is_paid'] = true;
+                                        if (DBSchema::hasColumn('minibar_receipts', 'status'))  $update['status']  = 'PAID';
+                                        if (DBSchema::hasColumn('minibar_receipts', 'paid_at')) $update['paid_at'] = $now;
+                                        if (DBSchema::hasColumn('minibar_receipts', 'paid_by')) $update['paid_by'] = Auth::id();
                                         if (! empty($update)) {
-                                            \App\Models\MinibarReceipt::where('reservation_guest_id', $record->id)->update($update);
+                                            MinibarReceipt::where('reservation_guest_id', $record->id)->update($update);
                                         }
 
-                                        // Pastikan room → VD
                                         if ($record->room_id) {
-                                            \App\Models\Room::whereKey($record->room_id)->update([
-                                                'status'            => \App\Models\Room::ST_VD,
+                                            Room::whereKey($record->room_id)->update([
+                                                'status'            => Room::ST_VD,
                                                 'status_changed_at' => $now,
                                             ]);
                                         }
@@ -632,13 +396,11 @@ final class ReservationGuestCheckOutForm
                                             ->success()->send();
                                     });
 
-                                    // Tampilkan bill single
-                                    $livewire->js("window.open('" . route('reservation-guests.bill', $record) . "?mode=single', '_blank', 'noopener,noreferrer')");
+                                    $livewire->js("window.open('" . route('reservation-guests.bill', $record) . "?mode=single','_blank','noopener,noreferrer')");
                                 })
                                 ->tooltip('Pisahkan tagihan untuk tamu ini'),
                         ])->columns(1)->columnSpan(3)->alignment('center'),
 
-                        // ===================== Payment & Check Out =====================
                         // ===================== Payment & Check Out =====================
                         SchemaActions::make([
                             Action::make('pay_and_checkout_adv')
@@ -649,15 +411,6 @@ final class ReservationGuestCheckOutForm
                                 ->disabled(function (\App\Models\ReservationGuest $record): bool {
                                     $hasActualCheckout = filled($record->actual_checkout);
                                     $hasPayment        = Payment::where('reservation_guest_id', $record->id)->exists();
-
-                                    Log::info('[C/O Button] CHECK', [
-                                        'guest_id'           => $record->id,
-                                        'reservation_id'     => $record->reservation_id,
-                                        'hasActualCheckout'  => $hasActualCheckout,
-                                        'hasPayment'         => $hasPayment,
-                                        'disabled'           => ($hasActualCheckout || $hasPayment),
-                                    ]);
-
                                     return $hasActualCheckout || $hasPayment;
                                 })
                                 ->schema([
@@ -668,18 +421,13 @@ final class ReservationGuestCheckOutForm
                                         ->label('Actual Amount (IDR)')
                                         ->disabled()
                                         ->dehydrated(false)
-                                        ->mask(RawJs::make('$money($input)'))
+                                        // ->mask(RawJs::make('$money($input)'))
                                         ->extraInputAttributes(['inputmode' => 'numeric'])
                                         ->afterStateHydrated(function ($state, callable $set, \App\Models\ReservationGuest $record) {
                                             $dueNow = self::dueNowForGuest($record);
                                             $set('actual_amount_view', $dueNow);
                                             $set('actual_amount', $dueNow);
                                             $set('amount', $dueNow);
-
-                                            Log::info('[C/O hydrate] dueNow', [
-                                                'guest_id' => $record->id,
-                                                'due_now'  => $dueNow,
-                                            ]);
                                         }),
 
                                     Hidden::make('actual_amount'),
@@ -712,8 +460,8 @@ final class ReservationGuestCheckOutForm
                                         ->searchable()
                                         ->preload()
                                         ->native(false)
-                                        ->visible(fn(Get $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
-                                        ->required(fn(Get $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
+                                        ->visible(fn(SchemaGet $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
+                                        ->required(fn(SchemaGet $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
                                         ->helperText('Wajib diisi untuk CARD/TRANSFER.'),
 
                                     Textarea::make('note')->label('Note')->rows(2),
@@ -725,27 +473,14 @@ final class ReservationGuestCheckOutForm
                                     $data['actual_amount']         ??= $due;
                                     $data['reservation_guest_id']  = (int) $record->id;
 
-                                    Log::info('[C/O Button] mutateDataUsing', [
-                                        'guest_id' => $record->id,
-                                        'due'      => $due,
-                                        'data'     => $data,
-                                    ]);
-
                                     return $data;
                                 })
                                 ->action(function (array $data, \App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
-                                    Log::info('[C/O Button] CLICK', [
-                                        'guest_id'       => $record->id,
-                                        'reservation_id' => $record->reservation_id,
-                                        'data'           => $data,
-                                        'user_id'        => Auth::id(),
-                                    ]);
 
                                     $pay  = (int) ($data['amount'] ?? 0);
                                     $must = (int) ($data['actual_amount'] ?? 0);
 
                                     if ($pay < $must) {
-                                        Log::warning('[C/O Button] Amount kurang dari tagihan', compact('pay', 'must'));
                                         \Filament\Notifications\Notification::make()
                                             ->title('Amount kurang dari tagihan.')
                                             ->body('Jumlah yang dibayar harus ≥ Actual Amount.')
@@ -757,7 +492,6 @@ final class ReservationGuestCheckOutForm
                                     $bankId     = isset($data['bank_id']) ? (int) $data['bank_id'] : null;
 
                                     if (in_array($methodForm, ['CARD', 'TRANSFER'], true) && empty($bankId)) {
-                                        Log::warning('[C/O Button] Bank wajib diisi untuk CARD/TRANSFER', ['method' => $methodForm, 'bank_id' => $bankId]);
                                         \Filament\Notifications\Notification::make()
                                             ->title('Bank belum dipilih.')
                                             ->body('Pilih bank untuk metode CARD/TRANSFER.')
@@ -770,7 +504,6 @@ final class ReservationGuestCheckOutForm
                                             ->where('hotel_id', $record->hotel_id)
                                             ->exists();
                                         if (! $isSameHotel) {
-                                            Log::error('[C/O Button] Bank tidak sesuai hotel', ['bank_id' => $bankId, 'hotel_id' => $record->hotel_id]);
                                             \Filament\Notifications\Notification::make()
                                                 ->title('Bank tidak valid.')
                                                 ->body('Akun bank yang dipilih tidak sesuai dengan hotel aktif.')
@@ -791,7 +524,6 @@ final class ReservationGuestCheckOutForm
 
                                         $res = $record->reservation()->lockForUpdate()->first();
                                         if (! $res) {
-                                            Log::error('[C/O Button] Reservation not found', ['guest_id' => $record->id]);
                                             \Filament\Notifications\Notification::make()
                                                 ->title('Reservation tidak ditemukan.')
                                                 ->warning()->send();
@@ -800,7 +532,6 @@ final class ReservationGuestCheckOutForm
                                         }
 
                                         if (filled($record->actual_checkout)) {
-                                            Log::warning('[C/O Button] Guest already checked out', ['guest_id' => $record->id]);
                                             \Filament\Notifications\Notification::make()
                                                 ->title('Guest ini sudah checkout.')
                                                 ->warning()->send();
@@ -809,7 +540,6 @@ final class ReservationGuestCheckOutForm
                                         }
 
                                         // 1) Payment
-                                        Log::info('[C/O Button] Creating payment ...', ['guest_id' => $record->id]);
                                         $payment = Payment::create([
                                             'hotel_id'             => $res->hotel_id,
                                             'reservation_id'       => $res->id,
@@ -822,8 +552,6 @@ final class ReservationGuestCheckOutForm
                                             'notes'                => (string) ($data['note'] ?? ''),
                                             'created_by'           => Auth::id(),
                                         ]);
-                                        Log::info('[C/O Button] Payment created', ['payment_id' => $payment->id]);
-
                                         // 2) Ledger
                                         $entryDate   = now()->toDateString();
                                         $description = 'Room Checkout #' . ($res->reservation_no ?? $res->id);
@@ -831,7 +559,6 @@ final class ReservationGuestCheckOutForm
                                         $amountInNet = min($pay, $must);
 
                                         if ($methodForLedger === 'cash' || empty($bankId)) {
-                                            Log::info('[C/O Button] Posting AccountLedger (cash) ...', compact('amountInNet', 'change'));
                                             AccountLedger::create([
                                                 'hotel_id'        => (int) $res->hotel_id,
                                                 'ledger_type'     => 'room',
@@ -865,7 +592,6 @@ final class ReservationGuestCheckOutForm
                                                 ]);
                                             }
                                         } else {
-                                            Log::info('[C/O Button] Posting BankLedger ...', ['amountInNet' => $amountInNet, 'change' => $change, 'bank_id' => $bankId, 'method' => $methodForLedger]);
                                             BankLedger::create([
                                                 'hotel_id'        => (int) $res->hotel_id,
                                                 'bank_id'         => (int) $bankId,
@@ -1021,12 +747,6 @@ final class ReservationGuestCheckOutForm
                                         );
                                     } catch (\Throwable $e) {
                                         DB::rollBack();
-                                        Log::error('[C/O Button] EXCEPTION', [
-                                            'guest_id' => $record->id,
-                                            'message'  => $e->getMessage(),
-                                            'file'     => $e->getFile(),
-                                            'line'     => $e->getLine(),
-                                        ]);
 
                                         \Filament\Notifications\Notification::make()
                                             ->title('Gagal checkout.')
@@ -1104,6 +824,106 @@ final class ReservationGuestCheckOutForm
         ];
     }
 
+    /**
+     * Hitung amount split per guest (Amount Due sudah termasuk tax, dibagi rata per guest).
+     * Ini SAMA dengan logika di blade view untuk "Amount to pay now" per guest.
+     */
+    private static function calculateSplitAmount(\App\Models\ReservationGuest $record): int
+    {
+        $res = $record->reservation;
+
+        if (! $res) {
+            return 0;
+        }
+
+        $tz = 'Asia/Makassar';
+        $allGuests = $res->reservationGuests()->orderBy('id')->get();
+
+        // Map minibar per RG
+        $minibarMap = [];
+        $ids = $allGuests->pluck('id')->all();
+        if (!empty($ids)) {
+            $minibarMap = \App\Models\MinibarReceipt::query()
+                ->whereIn('reservation_guest_id', $ids)
+                ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
+                ->groupBy('reservation_guest_id')
+                ->pluck('sum_total', 'reservation_guest_id')
+                ->toArray();
+        }
+
+        // === 1) Hitung BASE untuk GUEST INI (tanpa pajak) ===
+        $in  = $record->actual_checkin ?: $record->expected_checkin;
+        $out = $record->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
+        $n   = \App\Support\ReservationMath::nights($in, $out, 1);
+
+        $rate     = (float) \App\Support\ReservationMath::basicRate($record);
+        $discPct  = (float) ($record->discount_percent ?? 0);
+        $discAmt  = (int) round(($rate * $discPct) / 100);
+        $rateAfter = max(0, $rate - $discAmt);
+
+        $charge  = (int) ($record->charge ?? 0);
+        $extra   = (int) ($record->extra_bed_total ?? ((int) ($record->extra_bed ?? 0) * 100_000));
+        $mbSvc   = (int) ($minibarMap[$record->id] ?? 0);
+
+        $svcPct    = (float) ($record->reservation?->service_percent ?? 0);
+        $serviceRp = (int) round(($mbSvc * $svcPct) / 100);
+
+        $pen = \App\Support\ReservationMath::latePenalty(
+            $record->expected_checkin ?: ($record->reservation?->expected_arrival),
+            $record->actual_checkin,
+            $rate,
+            ['tz' => $tz],
+        );
+        $penalty = (int) ($pen['amount'] ?? 0);
+
+        $baseThis = (int) ($rateAfter * $n + $charge + $mbSvc + $serviceRp + $extra + $penalty);
+
+        // === 2) Hitung TOTAL BASE semua guest (untuk hitung proporsi pajak) ===
+        $totalBaseAll = 0;
+        foreach ($allGuests as $g) {
+            $inG  = $g->actual_checkin ?: $g->expected_checkin;
+            $outG = $g->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
+            $nG   = \App\Support\ReservationMath::nights($inG, $outG, 1);
+
+            $rateG     = (float) \App\Support\ReservationMath::basicRate($g);
+            $discPctG  = (float) ($g->discount_percent ?? 0);
+            $discAmtG  = (int) round(($rateG * $discPctG) / 100);
+            $rateAfterG = max(0, $rateG - $discAmtG);
+
+            $chargeG  = (int) ($g->charge ?? 0);
+            $extraG   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
+            $mbSvcG   = (int) ($minibarMap[$g->id] ?? 0);
+
+            $svcPctG    = (float) ($g->reservation?->service_percent ?? 0);
+            $serviceRpG = (int) round(($mbSvcG * $svcPctG) / 100);
+
+            $penG = \App\Support\ReservationMath::latePenalty(
+                $g->expected_checkin ?: ($g->reservation?->expected_arrival),
+                $g->actual_checkin,
+                $rateG,
+                ['tz' => $tz],
+            );
+            $penaltyG = (int) ($penG['amount'] ?? 0);
+
+            $baseG = (int) ($rateAfterG * $nG + $chargeG + $mbSvcG + $serviceRpG + $extraG + $penaltyG);
+            $totalBaseAll += $baseG;
+        }
+
+        // === 3) Alokasi pajak PROPORSIONAL untuk guest ini ===
+        $taxPct = (float) ($res?->tax?->percent ?? 0);
+        $totalTaxAll = (int) round(($totalBaseAll * $taxPct) / 100);
+
+        // Proporsi pajak = (base guest ini / total base semua) × total pajak
+        $taxForThis = 0;
+        if ($totalBaseAll > 0) {
+            $taxForThis = (int) round(($baseThis / $totalBaseAll) * $totalTaxAll);
+        }
+
+        $result = $baseThis + $taxForThis;
+
+        return $result;
+    }
+
     private static function dueNowForGuest(ReservationGuest $rg): int
     {
         $res = $rg->reservation;
@@ -1168,13 +988,6 @@ final class ReservationGuestCheckOutForm
 
         // Amount to pay now (sesuai blade: total seluruh tamu dikurangi yang sudah checkout)
         $remaining = max(0, $sumGrand - $checkedGrand);
-
-        Log::info('[C/O dueNowForGuest]', [
-            'reservation_id' => $res->id,
-            'sumGrand'       => $sumGrand,
-            'checkedGrand'   => $checkedGrand,
-            'remaining'      => $remaining,
-        ]);
 
         return $remaining;
     }

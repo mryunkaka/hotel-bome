@@ -2,20 +2,23 @@
 
 namespace App\Filament\Resources\MinibarDailyClosings;
 
-use App\Filament\Resources\MinibarDailyClosings\Pages\CreateMinibarDailyClosing;
+use BackedEnum;
+use Filament\Tables\Table;
+use Filament\Schemas\Schema;
+use Filament\Resources\Resource;
+use App\Models\MinibarDailyClosing;
+use Filament\Support\Icons\Heroicon;
+use App\Filament\Traits\ForbidReceptionistResource;
 use App\Filament\Resources\MinibarDailyClosings\Pages\EditMinibarDailyClosing;
 use App\Filament\Resources\MinibarDailyClosings\Pages\ListMinibarDailyClosings;
+use App\Filament\Resources\MinibarDailyClosings\Pages\CreateMinibarDailyClosing;
 use App\Filament\Resources\MinibarDailyClosings\Schemas\MinibarDailyClosingForm;
 use App\Filament\Resources\MinibarDailyClosings\Tables\MinibarDailyClosingsTable;
-use App\Models\MinibarDailyClosing;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
 
 class MinibarDailyClosingResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = MinibarDailyClosing::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentCheck;

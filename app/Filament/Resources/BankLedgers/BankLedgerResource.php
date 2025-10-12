@@ -10,6 +10,7 @@ use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\BankLedgers\Pages\EditBankLedger;
 use App\Filament\Resources\BankLedgers\Pages\ListBankLedgers;
@@ -19,6 +20,8 @@ use App\Filament\Resources\BankLedgers\Tables\BankLedgersTable;
 
 class BankLedgerResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = BankLedger::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::RectangleStack;

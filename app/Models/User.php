@@ -9,6 +9,11 @@ use Illuminate\Notifications\Notifiable;
 use Spatie\Permission\Traits\HasRoles;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @method bool hasRole(string|array|\Spatie\Permission\Contracts\Role $roles, string $guard = null)
+ * @method bool hasAnyRole(string ...$roles)
+ * @method \Illuminate\Support\Collection getRoleNames()
+ */
 class User extends Authenticatable
 {
     use HasFactory, Notifiable, HasRoles;

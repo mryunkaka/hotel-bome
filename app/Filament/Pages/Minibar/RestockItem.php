@@ -2,29 +2,31 @@
 
 namespace App\Filament\Pages\Minibar;
 
-use App\Models\MinibarItem;
-use App\Models\MinibarStockMovement;
-use App\Models\MinibarVendor;
-use Filament\Actions\Action;
-use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use App\Models\MinibarItem;
+use Filament\Actions\Action;
 use Filament\Schemas\Schema;
+use App\Models\MinibarVendor;
+use Illuminate\Support\Facades\DB;
+use App\Models\MinibarStockMovement;
 
 // Pakai komponen Forms DI DALAM schema:
+use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Repeater;
-use Filament\Forms\Components\DateTimePicker;
-
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
+use Filament\Forms\Components\Textarea;
 use Illuminate\Support\Facades\Session;
+
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
+use Filament\Forms\Components\DateTimePicker;
 use Illuminate\Validation\ValidationException;
+use App\Filament\Traits\ForbidReceptionistResource;
 
 class RestockItem extends Page
 {
+    use ForbidReceptionistResource;
     /** Sidebar nav */
     protected static string|\UnitEnum|null   $navigationGroup = 'Minibar';
     protected static string|\BackedEnum|null $navigationIcon  = 'heroicon-o-arrow-up-on-square';

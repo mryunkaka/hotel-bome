@@ -2,22 +2,25 @@
 
 namespace App\Filament\Resources\MinibarVendors;
 
-use App\Filament\Resources\MinibarVendors\Pages\CreateMinibarVendor;
+use BackedEnum;
+use Filament\Tables\Table;
+use Filament\Schemas\Schema;
+use App\Models\MinibarVendor;
+use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\MinibarVendors\Pages\EditMinibarVendor;
 use App\Filament\Resources\MinibarVendors\Pages\ListMinibarVendors;
+use App\Filament\Resources\MinibarVendors\Pages\CreateMinibarVendor;
 use App\Filament\Resources\MinibarVendors\Schemas\MinibarVendorForm;
 use App\Filament\Resources\MinibarVendors\Tables\MinibarVendorsTable;
-use App\Models\MinibarVendor;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class MinibarVendorResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = MinibarVendor::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTruck;

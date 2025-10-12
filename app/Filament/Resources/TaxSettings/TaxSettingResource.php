@@ -10,6 +10,7 @@ use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\TaxSettings\Pages\EditTaxSetting;
 use App\Filament\Resources\TaxSettings\Pages\ListTaxSettings;
@@ -19,6 +20,8 @@ use App\Filament\Resources\TaxSettings\Tables\TaxSettingsTable;
 
 class TaxSettingResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = TaxSetting::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::AdjustmentsHorizontal;

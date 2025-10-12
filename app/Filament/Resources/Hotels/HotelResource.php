@@ -2,21 +2,24 @@
 
 namespace App\Filament\Resources\Hotels;
 
-use App\Filament\Resources\Hotels\Pages\CreateHotel;
+use BackedEnum;
+use App\Models\Hotel;
+use Filament\Tables\Table;
+use Filament\Schemas\Schema;
+use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\Auth;
 use App\Filament\Resources\Hotels\Pages\EditHotel;
 use App\Filament\Resources\Hotels\Pages\ListHotels;
+use App\Filament\Traits\ForbidReceptionistResource;
+use App\Filament\Resources\Hotels\Pages\CreateHotel;
 use App\Filament\Resources\Hotels\Schemas\HotelForm;
 use App\Filament\Resources\Hotels\Tables\HotelsTable;
-use App\Models\Hotel;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Support\Facades\Auth;
 
 class HotelResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = Hotel::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingOffice;

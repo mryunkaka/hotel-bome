@@ -10,6 +10,7 @@ use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\AccountLedgers\Pages\EditAccountLedger;
 use App\Filament\Resources\AccountLedgers\Pages\ListAccountLedgers;
@@ -19,6 +20,8 @@ use App\Filament\Resources\AccountLedgers\Tables\AccountLedgersTable;
 
 class AccountLedgerResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = AccountLedger::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::DocumentText;

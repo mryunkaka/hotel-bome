@@ -2,22 +2,25 @@
 
 namespace App\Filament\Resources\MinibarReceipts;
 
-use App\Filament\Resources\MinibarReceipts\Pages\CreateMinibarReceipt;
+use BackedEnum;
+use Filament\Tables\Table;
+use Filament\Schemas\Schema;
+use App\Models\MinibarReceipt;
+use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\MinibarReceipts\Pages\EditMinibarReceipt;
 use App\Filament\Resources\MinibarReceipts\Pages\ListMinibarReceipts;
+use App\Filament\Resources\MinibarReceipts\Pages\CreateMinibarReceipt;
 use App\Filament\Resources\MinibarReceipts\Schemas\MinibarReceiptForm;
 use App\Filament\Resources\MinibarReceipts\Tables\MinibarReceiptsTable;
-use App\Models\MinibarReceipt;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class MinibarReceiptResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = MinibarReceipt::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingStorefront;

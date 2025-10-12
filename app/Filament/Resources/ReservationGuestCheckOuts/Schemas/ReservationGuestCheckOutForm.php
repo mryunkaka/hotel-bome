@@ -386,7 +386,7 @@ final class ReservationGuestCheckOutForm
                                         }),
 
                                     \Filament\Forms\Components\Select::make('method')
-                                        ->label('Method')
+                                        ->label('Pay Method')
                                         ->options([
                                             'CASH'     => 'Cash',
                                             'CARD'     => 'Card',
@@ -621,7 +621,7 @@ final class ReservationGuestCheckOutForm
                                         ->required(),
 
                                     Select::make('method')
-                                        ->label('Method')
+                                        ->label('Pay Method')
                                         ->options([
                                             'CASH'     => 'Cash',
                                             'CARD'     => 'Card',

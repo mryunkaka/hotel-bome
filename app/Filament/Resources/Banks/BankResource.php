@@ -2,23 +2,26 @@
 
 namespace App\Filament\Resources\Banks;
 
-use App\Filament\Resources\Banks\Pages\CreateBank;
+use BackedEnum;
+use App\Models\Bank;
+use Filament\Tables\Table;
+use Filament\Schemas\Schema;
+use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Database\Eloquent\Builder;
 use App\Filament\Resources\Banks\Pages\EditBank;
 use App\Filament\Resources\Banks\Pages\ListBanks;
+use App\Filament\Resources\Banks\Pages\CreateBank;
 use App\Filament\Resources\Banks\Schemas\BankForm;
 use App\Filament\Resources\Banks\Tables\BanksTable;
-use App\Models\Bank;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
-use Illuminate\Support\Facades\Session;
 
 class BankResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = Bank::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::Banknotes;

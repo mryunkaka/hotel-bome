@@ -2,22 +2,25 @@
 
 namespace App\Filament\Resources\MinibarItems;
 
-use App\Filament\Resources\MinibarItems\Pages\CreateMinibarItem;
+use BackedEnum;
+use Filament\Tables\Table;
+use App\Models\MinibarItem;
+use Filament\Schemas\Schema;
+use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
+use Illuminate\Database\Eloquent\Builder;
+use App\Filament\Traits\ForbidReceptionistResource;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\MinibarItems\Pages\EditMinibarItem;
 use App\Filament\Resources\MinibarItems\Pages\ListMinibarItems;
+use App\Filament\Resources\MinibarItems\Pages\CreateMinibarItem;
 use App\Filament\Resources\MinibarItems\Schemas\MinibarItemForm;
 use App\Filament\Resources\MinibarItems\Tables\MinibarItemsTable;
-use App\Models\MinibarItem;
-use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class MinibarItemResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = MinibarItem::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedShoppingBag;

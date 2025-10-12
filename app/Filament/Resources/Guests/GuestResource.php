@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Session;
 use Illuminate\Database\Eloquent\Builder;
 use App\Filament\Resources\Guests\Pages\EditGuest;
 use App\Filament\Resources\Guests\Pages\ListGuests;
+use App\Filament\Traits\ForbidReceptionistResource;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use App\Filament\Resources\Guests\Pages\CreateGuest;
 use App\Filament\Resources\Guests\Schemas\GuestForm;
@@ -19,6 +20,8 @@ use App\Filament\Resources\Guests\Tables\GuestsTable;
 
 class GuestResource extends Resource
 {
+    use ForbidReceptionistResource;
+
     protected static ?string $model = Guest::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::UserGroup;

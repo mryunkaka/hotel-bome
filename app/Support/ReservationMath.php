@@ -2,8 +2,11 @@
 
 namespace App\Support;
 
+use App\Models\MinibarReceipt;
 use Illuminate\Support\Carbon;
 use App\Models\ReservationGuest;
+use App\Models\MinibarReceiptItem;
+use Illuminate\Support\Facades\Schema as DBSchema;
 
 final class ReservationMath
 {
@@ -227,5 +230,441 @@ final class ReservationMath
             'deposit'                     => $deposit,
             'due'                         => $due,
         ];
+    }
+
+    /**
+     * Subtotal Minibar untuk RG.
+     */
+    public static function minibarSubtotal(ReservationGuest $g): int
+    {
+        return (int) MinibarReceiptItem::query()
+            ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $g->id))
+            ->sum('line_total');
+    }
+
+    /**
+     * Service% untuk RG (ambil dari reservation/service setting).
+     */
+    public static function servicePercent(ReservationGuest $g): float
+    {
+        return (float) ($g->reservation?->service_percent ?? ($g->reservation?->service?->percent ?? 0));
+    }
+
+    /**
+     * Pajak% untuk RG (ambil dari reservation/tax setting).
+     */
+    public static function taxPercent(ReservationGuest $g): float
+    {
+        return (float) ($g->reservation?->tax?->percent ?? 0);
+    }
+
+    /**
+     * Perhitungan "base" (sebelum pajak) utk satu RG, lengkap komponennya.
+     * base = (rate after disc × nights) + charge + minibar + service(minibar×svc%) + extra + penalty
+     */
+    public static function guestBase(ReservationGuest $g): array
+    {
+        // Nights (guest-first expected)
+        $in  = $g->actual_checkin ?: $g->expected_checkin;
+        $out = $g->actual_checkout ?: Carbon::now('Asia/Makassar');
+        $n   = self::nights($in, $out, 1);
+
+        // Rate dan diskon
+        $rate      = (float) self::basicRate($g);
+        $discPct   = (float) ($g->discount_percent ?? 0);
+        $discAmt   = (int) round(($rate * $discPct) / 100);
+        $rateAfter = max(0, $rate - $discAmt);
+
+        $roomAfter = (int) ($rateAfter * $n);
+
+        // Charge, extra bed
+        $chargeRp = (int) ($g->charge ?? 0);
+        $extraRp  = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
+
+        // Minibar & service
+        $minibarSub = self::unpaidMinibarSubtotal($g);
+        $svcPct     = self::servicePercent($g);
+        $serviceRp  = (int) round(($minibarSub * $svcPct) / 100);
+
+        // Penalty
+        $pen = self::latePenalty(
+            $g->expected_checkin ?: $g->reservation?->expected_arrival,
+            $g->actual_checkin,
+            $rate,
+            ['tz' => 'Asia/Makassar'],
+        );
+        $penaltyRp = (int) ($pen['amount'] ?? 0);
+
+        $base = $roomAfter + $chargeRp + $minibarSub + $serviceRp + $extraRp + $penaltyRp;
+
+        return [
+            'nights'     => $n,
+            'rate'       => $rate,
+            'rate_after' => $rateAfter,
+            'room_after' => $roomAfter,
+            'charge'     => $chargeRp,
+            'extra'      => $extraRp,
+            'minibar'    => $minibarSub,
+            'service'    => $serviceRp,
+            'penalty'    => $penaltyRp,
+            'base'       => (int) $base,
+        ];
+    }
+
+    /**
+     * Pajak total reservasi (SUM base semua RG × tax%) dan pajak rata per-guest.
+     */
+    public static function taxShareForReservation(ReservationGuest $current): array
+    {
+        $res = $current->reservation;
+        if (!$res) {
+            return ['tax_total' => 0, 'tax_per_guest' => 0, 'count' => 1, 'percent' => 0.0];
+        }
+
+        $guests = $res->reservationGuests ?? [];
+        $count  = max(1, (int) count($guests));
+        $pct    = (float) ($res->tax?->percent ?? 0);
+
+        $sumBase = 0;
+        foreach ($guests as $g) {
+            $sumBase += (int) self::guestBase($g)['base'];
+        }
+
+        $taxTotal    = (int) round(($sumBase * $pct) / 100);
+        $taxPerGuest = (int) round($taxTotal / $count);
+
+        return [
+            'tax_total'     => $taxTotal,
+            'tax_per_guest' => $taxPerGuest,
+            'count'         => $count,
+            'percent'       => $pct,
+            'sum_base'      => (int) $sumBase,
+        ];
+    }
+
+    /**
+     * Deposit untuk RG.
+     */
+    public static function deposits(ReservationGuest $g): array
+    {
+        $room = (int) ($g->deposit_room ?? 0);
+        $card = (int) ($g->deposit_card ?? 0);
+        return [
+            'room'  => $room,
+            'card'  => $card,
+            'total' => $room + $card,
+        ];
+    }
+
+    /**
+     * Amount Due per-guest untuk tabel "Guest Information" (TANPA pajak):
+     *   base - (deposit_room + deposit_card)
+     */
+    public static function amountDueGuestInfo(ReservationGuest $g): int
+    {
+        $base = (int) self::guestBase($g)['base'];
+        $dep  = self::deposits($g)['total'];
+        return max(0, $base - $dep);
+    }
+
+    /**
+     * Subtotal untuk "Guest Bill" (sudah termasuk pajak per-guest dibagi rata BILLING),
+     * dan sudah mengurangi deposit guest (room+card).
+     */
+    public static function subtotalGuestBill(ReservationGuest $g): array
+    {
+        $base   = (int) self::guestBaseForBilling($g)['base'];
+        $share  = self::taxShareForReservationBilling($g);
+        $dep    = self::deposits($g);
+
+        $subtotal = max(0, ($base + (int) $share['tax_per_guest']) - (int) $dep['total']);
+
+        return [
+            // komponen yang bisa dipakai di Blade langsung
+            'rate_after_disc_times_nights' => (int) self::guestBaseForBilling($g)['rate_after_times_nights'],
+            'charge'        => (int) self::guestBaseForBilling($g)['charge'],
+            'minibar'       => (int) self::guestBaseForBilling($g)['minibar_unpaid'],
+            'service'       => (int) self::guestBaseForBilling($g)['service_minibar_unpaid'],
+            'extra'         => (int) self::guestBaseForBilling($g)['extra'],
+            'penalty'       => (int) self::guestBaseForBilling($g)['penalty'],
+
+            'base'          => $base,
+            'tax_per_guest' => (int) $share['tax_per_guest'],
+            'deposit_room'  => (int) $dep['room'],
+            'deposit_card'  => (int) $dep['card'],
+            'subtotal'      => (int) $subtotal,
+        ];
+    }
+
+    /**
+     * Aggregasi untuk footer “Guest Information” dengan base BILLING (minibar unpaid only).
+     */
+    public static function aggregateGuestInfoFooter(ReservationGuest $current): array
+    {
+        $res = $current->reservation;
+        $guests = $res?->reservationGuests ?? [];
+
+        $sumBase = $sumTax = $sumDepRoom = $sumDepCard = 0;
+        $sumBaseAfterDeps = $checkedGrand = 0;
+
+        $pct = (float) ($res?->tax?->percent ?? 0);
+
+        foreach ($guests as $g) {
+            $gb   = self::guestBaseForBilling($g);
+            $base = (int) $gb['base'];
+            $tax  = (int) round(($base * $pct) / 100);
+
+            $dep = self::deposits($g);
+            $depTotal = (int) $dep['total'];
+            $amountDueNoTax = max(0, $base - $depTotal);
+
+            $sumBase          += $base;
+            $sumTax           += $tax;
+            $sumDepRoom       += (int) $dep['room'];
+            $sumDepCard       += (int) $dep['card'];
+            $sumBaseAfterDeps += $amountDueNoTax;
+
+            if (filled($g->actual_checkout)) {
+                $checkedGrand += ($amountDueNoTax + $tax);
+            }
+        }
+
+        $totalDueAll = $sumBaseAfterDeps + $sumTax;
+        $toPayNow    = max(0, $totalDueAll - $checkedGrand);
+
+        return [
+            'sum_base'                 => (int) $sumBase,
+            'sum_tax'                  => (int) $sumTax,
+            'sum_dep_room'             => (int) $sumDepRoom,
+            'sum_dep_card'             => (int) $sumDepCard,
+            'sum_base_after_deposits'  => (int) $sumBaseAfterDeps,
+            'total_due_all'            => (int) $totalDueAll,
+            'checked_grand'            => (int) $checkedGrand,
+            'to_pay_now'               => (int) $toPayNow,
+        ];
+    }
+
+    /**
+     * View-model baris per-guest untuk dokumen BILL.
+     * Supaya Blade cukup render angka.
+     */
+    public static function billRow(ReservationGuest $g, string $tz = 'Asia/Makassar'): array
+    {
+        $in  = $g->actual_checkin ?: $g->expected_checkin;
+        $out = $g->actual_checkout ?: Carbon::now($tz);
+        $n   = self::nights($in, $out, 1);
+
+        $rate = (int) self::basicRate($g);
+        $disc = (float) ($g->discount_percent ?? 0);
+        $after = (int) self::guestBaseForBilling($g)['rate_after'];
+        $afterTimesNights = (int) self::guestBaseForBilling($g)['rate_after_times_nights'];
+
+        $b = self::guestBaseForBilling($g);
+        $base = (int) $b['base'];
+
+        $taxPct = (float) ($g->reservation?->tax?->percent ?? 0);
+        $taxRp  = (int) round(($base * $taxPct) / 100);
+
+        return [
+            'guest_name'   => $g->guest?->name ?? '-',
+            'room_no'      => $g->room?->room_no,
+            'room_type'    => $g->room?->type,
+            'rate'         => $rate,
+            'disc_pct'     => $disc,
+            'nights'       => $n,
+            'checkin'      => $in,
+            'checkout'     => $out,
+            'status'       => filled($g->actual_checkout) ? 'CO' : 'IH',
+
+            'rate_after_times_nights' => $afterTimesNights,
+            'charge'     => (int) $b['charge'],
+            'service'    => (int) $b['service_minibar_unpaid'],
+            'extra'      => (int) $b['extra'],
+            'penalty'    => (int) $b['penalty'],
+            'amount'     => (int) $base,  // Amount (before tax)
+
+            'tax_rp'     => $taxRp,       // jika butuh total termasuk pajak (mode=all)
+        ];
+    }
+
+    /**
+     * Cek apakah RG ini masih punya MINIBAR yang belum dibayar.
+     * Prioritas indikator: `status` → `is_paid` → fallback (tidak dihitung).
+     */
+    public static function hasUnpaidMinibar(ReservationGuest $rg): bool
+    {
+        $res = $rg->reservation;
+        if (! $res) return false;
+
+        $q = MinibarReceipt::query()->where('reservation_guest_id', $rg->id);
+
+        if (DBSchema::hasColumn('minibar_receipts', 'status')) {
+            $q->where('status', '!=', 'PAID');
+        } elseif (DBSchema::hasColumn('minibar_receipts', 'is_paid')) {
+            $q->where(function ($qq) {
+                $qq->whereNull('is_paid')->orWhere('is_paid', false);
+            });
+        } else {
+            return false; // tak ada indikator → anggap tidak ada due agar tidak false positive
+        }
+
+        return $q->exists();
+    }
+
+    /**
+     * Total MINIBAR DUE untuk RG:
+     *   = SUM(total_amount unpaid) + service(minibar) + tax(minibar+service)
+     * Unpaid mengikuti prioritas indikator: `status` → `is_paid`.
+     */
+    public static function minibarDue(ReservationGuest $rg): int
+    {
+        $res = $rg->reservation;
+        if (! $res) return 0;
+
+        $baseQuery = MinibarReceipt::query()->where('reservation_guest_id', $rg->id);
+
+        if (DBSchema::hasColumn('minibar_receipts', 'status')) {
+            $baseQuery->where('status', '!=', 'PAID');
+        } elseif (DBSchema::hasColumn('minibar_receipts', 'is_paid')) {
+            $baseQuery->where(function ($q) {
+                $q->whereNull('is_paid')->orWhere('is_paid', false);
+            });
+        } else {
+            return 0;
+        }
+
+        // jumlahkan hanya receipt yang benar-benar masih unpaid
+        $minibarSub = (int) $baseQuery->sum('total_amount');
+        if ($minibarSub <= 0) return 0;
+
+        // service & tax ambil dari reservation setting
+        $svcPct    = (float) ($res->service_percent ?? ($res->service->percent ?? 0));
+        $serviceRp = (int) round(($minibarSub * $svcPct) / 100);
+
+        $taxPct  = (float) ($res->tax->percent ?? 0);
+        $taxBase = $minibarSub + $serviceRp;
+        $taxRp   = (int) round(($taxBase * $taxPct) / 100);
+
+        return (int) ($taxBase + $taxRp);
+    }
+
+    /**
+     * Subtotal MINIBAR yang masih UNPAID (tanpa service & tax).
+     * Sumber data mengikuti indikator: status!='PAID' atau is_paid=false.
+     */
+    public static function unpaidMinibarSubtotal(ReservationGuest $g): int
+    {
+        $q = MinibarReceipt::query()->where('reservation_guest_id', $g->id);
+
+        if (DBSchema::hasColumn('minibar_receipts', 'status')) {
+            $q->where('status', '!=', 'PAID');
+        } elseif (DBSchema::hasColumn('minibar_receipts', 'is_paid')) {
+            $q->where(function ($qq) {
+                $qq->whereNull('is_paid')->orWhere('is_paid', false);
+            });
+        } else {
+            // tidak ada indikator — anggap tidak ada due untuk mencegah double-collect
+            return 0;
+        }
+
+        return (int) $q->sum('total_amount'); // asumsi total_amount = subtotal item (tanpa service/tax)
+    }
+
+    /**
+     * Service nominal hanya untuk MINIBAR UNPAID.
+     */
+    public static function unpaidMinibarService(ReservationGuest $g): int
+    {
+        $svcPct = (float) ($g->reservation?->service_percent ?? ($g->reservation?->service?->percent ?? 0));
+        $minibarSub = self::unpaidMinibarSubtotal($g);
+        return (int) round(($minibarSub * $svcPct) / 100);
+    }
+
+    /**
+     * Base utk kebutuhan BILLING: menghitung MINIBAR hanya yang UNPAID.
+     * base = (rateAfter×n) + charge + extra + penalty + minibar_unpaid + service(minibar_unpaid)
+     */
+    public static function guestBaseForBilling(ReservationGuest $g): array
+    {
+        $in  = $g->actual_checkin ?: $g->expected_checkin;
+        $out = $g->actual_checkout ?: Carbon::now('Asia/Makassar');
+        $n   = self::nights($in, $out, 1);
+
+        $rate      = (float) self::basicRate($g);
+        $discPct   = (float) ($g->discount_percent ?? 0);
+        $discAmt   = (int) round(($rate * $discPct) / 100);
+        $rateAfter = max(0, $rate - $discAmt);
+
+        $roomAfter = (int) ($rateAfter * $n);
+        $chargeRp  = (int) ($g->charge ?? 0);
+        $extraRp   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * self::EXTRA_BED_PRICE_DEFAULT));
+
+        $pen = self::latePenalty(
+            $g->expected_checkin ?: $g->reservation?->expected_arrival,
+            $g->actual_checkin,
+            $rate,
+            ['tz' => 'Asia/Makassar'],
+        );
+        $penaltyRp = (int) ($pen['amount'] ?? 0);
+
+        $minibarUnpaid = self::unpaidMinibarSubtotal($g);
+        $serviceUnpaid = self::unpaidMinibarService($g);
+
+        $base = $roomAfter + $chargeRp + $extraRp + $penaltyRp + $minibarUnpaid + $serviceUnpaid;
+
+        return [
+            'nights'                        => $n,
+            'rate'                          => (int) $rate,
+            'disc_percent'                  => $discPct,
+            'disc_amount'                   => $discAmt,
+            'rate_after'                    => (int) $rateAfter,
+            'rate_after_times_nights'       => (int) ($rateAfter * $n),
+            'charge'                        => $chargeRp,
+            'extra'                         => $extraRp,
+            'penalty'                       => $penaltyRp,
+            'minibar_unpaid'                => (int) $minibarUnpaid,
+            'service_minibar_unpaid'        => (int) $serviceUnpaid,
+            'base'                          => (int) $base,
+        ];
+    }
+
+    /**
+     * Tax share utk BILLING: bagi rata pajak berdasarkan SUM base (billing) × tax% / jumlah guest.
+     * (Mirip taxShareForReservation(), tapi pakai base "for billing".)
+     */
+    public static function taxShareForReservationBilling(ReservationGuest $current): array
+    {
+        $res = $current->reservation;
+        if (! $res) {
+            return ['tax_total' => 0, 'tax_per_guest' => 0, 'count' => 1, 'percent' => 0.0];
+        }
+
+        $guests = $res->reservationGuests ?? [];
+        $count  = max(1, (int) count($guests));
+        $pct    = (float) ($res->tax?->percent ?? 0);
+
+        $sumBase = 0;
+        foreach ($guests as $g) {
+            $sumBase += (int) self::guestBaseForBilling($g)['base'];
+        }
+
+        $taxTotal    = (int) round(($sumBase * $pct) / 100);
+        $taxPerGuest = (int) round($taxTotal / $count);
+
+        return [
+            'tax_total'     => $taxTotal,
+            'tax_per_guest' => $taxPerGuest,
+            'count'         => $count,
+            'percent'       => $pct,
+            'sum_base'      => (int) $sumBase,
+        ];
+    }
+
+    // Semua MINIBAR (paid+unpaid) – tetap dipertahankan untuk kebutuhan display lama
+    public static function minibarSubtotalAll(ReservationGuest $g): int
+    {
+        return (int) MinibarReceiptItem::query()
+            ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $g->id))
+            ->sum('line_total');
     }
 }

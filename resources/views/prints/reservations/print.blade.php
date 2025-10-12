@@ -146,7 +146,7 @@
         width: 100% !important;
         table-layout: fixed !important;
         border-collapse: collapse;
-        font-size: 9px;
+        font-size: 7px;
         }
 
         .items th, .items td {

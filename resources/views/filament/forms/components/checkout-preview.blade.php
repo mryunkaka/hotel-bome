@@ -39,7 +39,7 @@
 
     // Persentase service — pakai field/resolusi yang tersedia di Reservation terlebih dahulu.
     // Silakan sesuaikan fallback sesuai skema project-mu kalau ada lokasi lain untuk service percent.
-    $svcPct = (float) ($res?->service_percent ?? ($res?->service?->percent ?? 0));
+    $svcPct = (float) ($res?->service_percent ?? 0);
 
     // Nominal service yang DIHITUNG DARI MINIBAR
     $serviceRp = (int) round(($minibarSub * $svcPct) / 100);
@@ -205,24 +205,99 @@
                             <tr><td class="k">After Discount / Night</td><td class="v"><strong>{{ $money($afterDiscPerNight) }}</strong></td></tr>
                         </table>
                     </div>
+                    @php
+                        $gb = ReservationMath::subtotalGuestBill($rg);
 
+                        $minibarDue = \App\Support\ReservationMath::minibarDue($rg);
+                        // Ambil semuanya dari helper (fallback ke nilai lama jika key belum ada)
+                        $afterDiscTimesNights = (int) ($gb['rate_after_disc_times_nights'] ?? $afterDiscTimesNights);
+                        $chargeRp             = (int) ($gb['charge'] ?? $chargeRp);
+                        $minibarSub           = (int) ($gb['minibar'] ?? $minibarSub);
+                        $extraSub             = (int) ($gb['extra'] ?? $extraSub);
+                        $penaltyRp            = (int) ($gb['penalty'] ?? $penaltyRp);
+
+                        $taxPerGuest          = (int) ($gb['tax_per_guest'] ?? 0);
+                        $depositCard          = (int) ($gb['deposit_card'] ?? 0);
+                        $depositRoom          = (int) ($gb['deposit_room'] ?? 0);
+                        $subAfterDeposit      = (int) ($gb['subtotal'] ?? 0);
+                    @endphp
                     <div class="card">
                         <div class="title">Guest Bill</div>
                         <div class="hb-body" style="padding:0">
                             <table class="table">
                                 <tr><td class="k">Rate After Discount × Nights</td><td class="v">{{ $money($afterDiscTimesNights) }}</td></tr>
                                 <tr><td class="k">Charge</td><td class="v">{{ $money($chargeRp) }}</td></tr>
-                                <tr><td class="k">Service</td><td class="v">{{ $money($minibarSub) }}</td></tr>
+                                @php
+                                    // pakai $rg yang sudah kamu set di bagian atas view
+                                    $rgId = $rg->id ?? null;
+
+                                    // ambil daftar receipt minibar milik RG ini
+                                    $receipts = $rgId
+                                        ? \App\Models\MinibarReceipt::where('reservation_guest_id', $rgId)
+                                            ->orderByDesc('id')
+                                            ->get(['id','receipt_no'])
+                                        : collect();
+
+                                    // jika hanya 1 receipt, sediakan 1 tombol langsung
+                                    $printMinibarUrl = $receipts->count() === 1
+                                        ? route('minibar-receipts.print', ['receipt' => $receipts->first()->id])
+                                        : null;
+                                @endphp
+                                <tr>
+                                    <td class="k">Minibar</td>
+                                    <td class="v">
+                                        @if ($minibarDue > 0)
+                                            {{ $money($minibarDue) }}
+                                        @else
+                                            <span class="pill" style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:1px 6px;border-radius:999px;font-weight:600;">
+                                                Paid
+                                            </span>
+                                        @endif
+
+                                        {{-- tombol print --}}
+                                        @if ($printMinibarUrl)
+                                            <a href="{{ $printMinibarUrl }}" target="_blank" rel="noopener noreferrer"
+                                            style="margin-left:8px;padding:2px 8px;border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:6px;text-decoration:none;font-weight:600;font-size:11px;">
+                                                Print Minibar
+                                            </a>
+                                        @elseif($receipts->count() > 1)
+                                            <details style="display:inline-block;margin-left:8px;">
+                                                <summary style="cursor:pointer;padding:2px 8px;border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:6px;font-weight:600;font-size:11px;list-style:none;">
+                                                    Print Minibar
+                                                </summary>
+                                                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:6px;margin-top:6px;position:absolute;z-index:20;">
+                                                    @foreach ($receipts as $r)
+                                                        <div style="margin:4px 0;">
+                                                            <a href="{{ route('minibar-receipts.print', ['receipt' => $r->id]) }}"
+                                                            target="_blank" rel="noopener noreferrer"
+                                                            style="text-decoration:none;color:#1d4ed8;">
+                                                                Receipt #{{ $r->receipt_no ?? $r->id }}
+                                                            </a>
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            </details>
+                                        @endif
+                                    </td>
+                                </tr>
                                 <tr><td class="k">Extra Bed</td><td class="v">{{ $money($extraSub) }}</td></tr>
                                 @if ($penaltyRp > 0)
                                     <tr><td class="k">Late Arrival Penalty</td><td class="v">{{ $money($penaltyRp) }}</td></tr>
                                 @endif
-                                {{-- ❌ Tax tidak ditampilkan di sini --}}
+                                @if (($taxPerGuest ?? 0) > 0)
+                                <tr><td class="k">Tax (per guest)</td><td class="v">{{ $money($taxPerGuest) }}</td></tr>
+                                @endif
+                                @if (($depositCard ?? 0) > 0)
+                                <tr><td class="k">Deposit Card</td><td class="v">- {{ $money($depositCard) }}</td></tr>
+                                @endif
+                                @if (($depositRoom ?? 0) > 0)
+                                <tr><td class="k">Deposit Room</td><td class="v">- {{ $money($depositRoom) }}</td></tr>
+                                @endif
                             </table>
                             {{-- SUBTOTAL (tanpa tax) --}}
                             <div class="total">
-                                <div>SUBTOTAL (before tax)</div>
-                                <div>{{ $money($taxBase) }}</div>
+                                <div>Subtotal</div>
+                                <div>{{ $money($subAfterDeposit) }}</div>
                             </div>
                         </div>
                     </div>
@@ -355,7 +430,10 @@
                                                 <span class="muted"> (ETD {{ ReservationView::fmtDate($g->expected_checkout, true) }})</span>
                                             @endif
                                         </td>
-                                        <td class="v">{{ ReservationView::fmtMoney($gTaxBase) }}</td>
+                                        @php
+                                        $gAmountDue = ReservationMath::amountDueGuestInfo($g); // base - deposit (tanpa pajak)
+                                        @endphp
+                                        <td class="v"><strong>{{ ReservationView::fmtMoney($gAmountDue) }}</strong></td>
                                         <td>
                                             @if ($g->id === ($rg->id ?? null))
                                                 <span class="pill" style="background:#eef2ff;border-color:#c7d2fe;color:#3730a3">Selected</span>
@@ -375,37 +453,36 @@
 
                                 {{-- ===== Footer totals (tanpa ubah kolom) ===== --}}
                                 <tfoot>
-                                    <tr>
-                                        <td colspan="7" class="v" style="text-align:right">Subtotal (before tax)</td>
-                                        <td class="v">{{ ReservationView::fmtMoney($sumBase) }}</td>
-                                        <td></td>
-                                    </tr>
-                                    <tr>
-                                        <td colspan="7" class="v" style="text-align:right">Tax</td>
-                                        <td class="v">{{ ReservationView::fmtMoney($sumTax) }}</td>
-                                        <td></td>
-                                    </tr>
-                                    <tr>
-                                        <td colspan="7" class="v" style="text-align:right">TOTAL (Amount Due + Tax)</td>
-                                        <td class="v"><strong>{{ ReservationView::fmtMoney($sumGrand) }}</strong></td>
-                                        <td></td>
-                                    </tr>
+                                    @php
+                                    $agg = ReservationMath::aggregateGuestInfoFooter($rg);
+                                    @endphp
 
-                                    {{-- BARU: potong tamu yang sudah checkout (kolom align) --}}
                                     <tr>
-                                        <td colspan="7" class="v" style="text-align:right">Less: Guests already checked-out</td>
-                                        <td class="v">{{ ReservationView::fmtMoney($checkedGrand) }}</td>
-                                        <td></td>
+                                    <td colspan="7" class="v" style="text-align:right">Subtotal (before tax)</td>
+                                    <td class="v">{{ ReservationView::fmtMoney($agg['sum_base_after_deposits']) }}</td>
+                                    <td></td>
                                     </tr>
-                                    @php $toPayNow = max(0, $sumGrand - $checkedGrand); @endphp
                                     <tr>
-                                        <td colspan="7" class="v" style="text-align:right">Amount to pay now</td>
-                                        <td class="v"><strong>{{ ReservationView::fmtMoney($toPayNow) }}</strong></td>
-                                        <td></td>
+                                    <td colspan="7" class="v" style="text-align:right">Tax</td>
+                                    <td class="v">{{ ReservationView::fmtMoney($agg['sum_tax']) }}</td>
+                                    <td></td>
+                                    </tr>
+                                    <tr>
+                                    <td colspan="7" class="v" style="text-align:right">TOTAL (Amount Due + Tax)</td>
+                                    <td class="v"><strong>{{ ReservationView::fmtMoney($agg['total_due_all']) }}</strong></td>
+                                    <td></td>
+                                    </tr>
+                                    <tr>
+                                    <td colspan="7" class="v" style="text-align:right">Less: Guests already checked-out</td>
+                                    <td class="v">{{ ReservationView::fmtMoney($agg['checked_grand']) }}</td>
+                                    <td></td>
+                                    </tr>
+                                    <tr>
+                                    <td colspan="7" class="v" style="text-align:right">Amount to pay now</td>
+                                    <td class="v"><strong>{{ ReservationView::fmtMoney($agg['to_pay_now']) }}</strong></td>
+                                    <td></td>
                                     </tr>
                                 </tfoot>
-
-
                             </table>
                         </div>
                     </div>

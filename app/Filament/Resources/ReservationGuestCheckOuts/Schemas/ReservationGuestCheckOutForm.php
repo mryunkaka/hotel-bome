@@ -13,8 +13,6 @@ use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use App\Models\AccountLedger;
 use App\Models\MinibarReceipt;
-use App\Models\ReservationGuest;
-use App\Support\ReservationMath;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -43,49 +41,43 @@ final class ReservationGuestCheckOutForm
                 ])->columnSpanFull(),
             Section::make('Actions')
                 ->schema([
-                    Grid::make(15)->schema([
-
-                        // ===================== Guest Folio =====================
+                    Grid::make(12)->schema([
                         SchemaActions::make([
+                            // 1) Guest Folio
                             Action::make('folio_pdf')
                                 ->label('Guest Folio')
                                 ->icon('heroicon-o-clipboard-document-list')
-                                ->disabled(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout))
-                                ->tooltip(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout)
-                                    ? 'Hanya tersedia setelah semua tamu telah check out.' : null)
+                                ->color('info')
+                                ->button()
+                                ->outlined()
+                                ->disabled(function (\App\Models\ReservationGuest $record) {
+                                    $res = $record->reservation;
+                                    if (!$res) return true;
+                                    return $res->reservationGuests()->whereNull('actual_checkout')->exists();
+                                })
+                                ->tooltip(function (\App\Models\ReservationGuest $record) {
+                                    $res = $record->reservation;
+                                    if (! $res) return 'Reservation tidak ditemukan.';
+                                    return $res->reservationGuests()->whereNull('actual_checkout')->exists()
+                                        ? 'Hanya tersedia setelah semua tamu telah check out.' : null;
+                                })
                                 ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.folio', $record))
-                                ->openUrlInNewTab()
-                                ->color('info')        // UI: warna biru-informasi
-                                ->button()             // UI: gaya tombol
-                                ->outlined(),          // UI: outline biar beda aksen
-                        ])->columns(1)->columnSpan(3)
-                            ->alignment('center'),       // UI: posisikan tombol di tengah
+                                ->openUrlInNewTab(),
 
-                        // ===================== Room Post & Correction =====================
-                        SchemaActions::make([
+                            // 2) P & C
                             Action::make('post_corr')
                                 ->label('P & C')
                                 ->icon('heroicon-o-adjustments-horizontal')
-                                ->disabled(function (\App\Models\ReservationGuest $record): bool {
-                                    if (filled($record->actual_checkout)) {
-                                        return true;
-                                    }
-                                    return \App\Models\Payment::where('reservation_guest_id', $record->id)->exists();
-                                })
-                                ->tooltip(function (\App\Models\ReservationGuest $record) {
-                                    if (filled($record->actual_checkout)) {
-                                        return 'Tamu sudah check out.';
-                                    }
-                                    if (\App\Models\Payment::where('reservation_guest_id', $record->id)->exists()) {
-                                        return 'Payment already recorded — posting/correction is locked.';
-                                    }
-                                    return null;
-                                })
+                                ->color('gray')
+                                ->button()
+                                ->outlined()
+                                ->disabled(fn(\App\Models\ReservationGuest $record) => filled($record->actual_checkout))
+                                ->tooltip(fn(\App\Models\ReservationGuest $record) => filled($record->actual_checkout) ? 'Tamu sudah check out.' : null)
                                 ->schema([
                                     TextInput::make('adjustment_rp')
                                         ->label('Adjustment (±Rp) → ditempel ke kolom Charge')
                                         ->numeric()
-                                        ->mask(\Filament\Support\RawJs::make('$money($input)'))
+                                        ->mask(RawJs::make('$money($input)'))
                                         ->stripCharacters(',')
                                         ->required(),
                                     \Filament\Forms\Components\Textarea::make('reason')->label('Reason')->rows(2),
@@ -94,72 +86,266 @@ final class ReservationGuestCheckOutForm
                                     if (filled($record->actual_checkout)) {
                                         \Filament\Notifications\Notification::make()
                                             ->title('Guest sudah checkout — tidak bisa melakukan Room Post & Correction.')
-                                            ->warning()
-                                            ->send();
-                                        return;
-                                    }
-                                    if (\App\Models\Payment::where('reservation_guest_id', $record->id)->exists()) {
-                                        \Filament\Notifications\Notification::make()
-                                            ->title('Payment untuk guest ini sudah ada — Room Post & Correction dikunci.')
-                                            ->warning()
-                                            ->send();
+                                            ->warning()->send();
                                         return;
                                     }
                                     $record->charge = (int) ($record->charge ?? 0) + (int) $data['adjustment_rp'];
                                     $record->save();
+                                    \Filament\Notifications\Notification::make()->title('Charge adjusted.')->success()->send();
+                                }),
 
-                                    \Filament\Notifications\Notification::make()
-                                        ->title('Charge adjusted.')
-                                        ->success()
-                                        ->send();
-                                })
-                                ->color('gray')   // UI: abu-abu agar beda dari tombol lain
-                                ->button()
-                                ->outlined(),
-                        ])->columns(1)->columnSpan(3)
-                            ->alignment('center'),
-
-                        // ===================== Print Bill =====================
-                        SchemaActions::make([
+                            // 3) Print Bill
                             Action::make('print_bill')
                                 ->label('Print Bill')
                                 ->icon('heroicon-o-printer')
-                                ->disabled(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout))
-                                ->tooltip(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkout)
-                                    ? 'Hanya tersedia setelah semua tamu telah check out.' : null)
-                                ->url(
-                                    fn(\App\Models\ReservationGuest $record) =>
-                                    route('reservation-guests.bill', $record) . '?mode=all'
-                                )
-                                ->openUrlInNewTab()
                                 ->color('primary')
-                                ->button(),
-                        ])->columns(1)->columnSpan(3)
-                            ->alignment('center'),
+                                ->button()
+                                ->disabled(function (\App\Models\ReservationGuest $record) {
+                                    $res = $record->reservation;
+                                    if (! $res) return true;
+                                    return $res->reservationGuests()->whereNull('actual_checkout')->exists();
+                                })
+                                ->tooltip(function (\App\Models\ReservationGuest $record) {
+                                    $res = $record->reservation;
+                                    if (! $res) return 'Reservation tidak ditemukan.';
+                                    return $res->reservationGuests()->whereNull('actual_checkout')->exists()
+                                        ? 'Hanya tersedia setelah semua tamu telah check out.' : null;
+                                })
+                                ->url(fn(\App\Models\ReservationGuest $record) => route('reservation-guests.bill', $record) . '?mode=all')
+                                ->openUrlInNewTab(),
 
-                        SchemaActions::make([
-                            \Filament\Actions\Action::make('split_bill')
+                            // 4) Split Minibar — tampil hanya jika ada due
+                            Action::make('split_minibar')
+                                ->label('Split Minibar')
+                                ->icon('heroicon-o-sparkles')
+                                ->color('secondary')
+                                ->button()
+                                ->visible(fn(\App\Models\ReservationGuest $record) => \App\Support\ReservationMath::hasUnpaidMinibar($record))
+                                ->mountUsing(function (\App\Models\ReservationGuest $record, Action $action) {
+                                    $due = \App\Support\ReservationMath::minibarDue($record);
+                                    $action->fillForm([
+                                        'actual_amount' => $due,
+                                        'amount'        => $due,
+                                        'method'        => null,
+                                        'bank_id'       => null,
+                                        'note'          => 'Split Minibar',
+                                    ]);
+                                })
+                                ->schema([
+                                    \Filament\Forms\Components\Placeholder::make('actual_amount_view')
+                                        ->label('Minibar Due (IDR)')
+                                        ->content(fn(\App\Models\ReservationGuest $record) =>
+                                        'Rp ' . number_format(\App\Support\ReservationMath::minibarDue($record), 0, ',', '.')),
+                                    Hidden::make('actual_amount')
+                                        ->default(fn(\App\Models\ReservationGuest $record) => \App\Support\ReservationMath::minibarDue($record)),
+                                    TextInput::make('amount')
+                                        ->label('Amount (IDR)')
+                                        ->numeric()->minValue(0)
+                                        ->default(fn(\App\Models\ReservationGuest $record) => \App\Support\ReservationMath::minibarDue($record))
+                                        ->mask(\Filament\Support\RawJs::make('$money($input)'))
+                                        ->stripCharacters(',')->required(),
+                                    Select::make('method')->label('Method')
+                                        ->options(['CASH' => 'Cash', 'CARD' => 'Card', 'TRANSFER' => 'Transfer', 'OTHER' => 'Other'])
+                                        ->required()->reactive(),
+                                    Select::make('bank_id')->label('Bank Account')
+                                        ->options(fn(\App\Models\ReservationGuest $record) => Bank::query()
+                                            ->where('hotel_id', $record->hotel_id)->orderBy('name')->pluck('name', 'id'))
+                                        ->searchable()->preload()->native(false)
+                                        ->visible(fn(SchemaGet $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
+                                        ->required(fn(SchemaGet $get) => in_array($get('method'), ['CARD', 'TRANSFER'], true))
+                                        ->helperText('Wajib diisi untuk CARD/TRANSFER.'),
+                                    Textarea::make('note')->label('Note')->rows(2),
+                                ])
+                                // ⬇ aksi sama persis seperti yang sudah kamu buat sebelumnya
+                                ->action(function (array $data, \App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
+
+                                    $res = $record->reservation;
+                                    if (! $res) {
+                                        \Filament\Notifications\Notification::make()->title('Reservation tidak ditemukan.')->warning()->send();
+                                        return;
+                                    }
+
+                                    $must = (int) ($data['actual_amount'] ?? 0);
+                                    if ($must <= 0) $must = \App\Support\ReservationMath::minibarDue($record);
+
+                                    $pay  = (int) ($data['amount'] ?? 0);
+                                    if ($pay < $must) {
+                                        \Filament\Notifications\Notification::make()
+                                            ->title('Amount kurang dari Minibar Due.')
+                                            ->body('Jumlah yang dibayar harus ≥ Minibar Due.')
+                                            ->danger()->send();
+                                        return;
+                                    }
+
+                                    $methodForm = strtoupper((string) ($data['method'] ?? 'CASH'));
+                                    $bankId     = isset($data['bank_id']) ? (int) $data['bank_id'] : null;
+
+                                    if (in_array($methodForm, ['CARD', 'TRANSFER'], true)) {
+                                        if (empty($bankId)) {
+                                            \Filament\Notifications\Notification::make()->title('Bank belum dipilih.')->warning()->send();
+                                            return;
+                                        }
+                                        $isSameHotel = \App\Models\Bank::whereKey($bankId)->where('hotel_id', $record->hotel_id)->exists();
+                                        if (! $isSameHotel) {
+                                            \Filament\Notifications\Notification::make()->title('Bank tidak valid untuk hotel ini.')->danger()->send();
+                                            return;
+                                        }
+                                    }
+
+                                    $methodForLedger = match ($methodForm) {
+                                        'CASH' => 'cash',
+                                        'CARD' => 'edc',
+                                        'TRANSFER' => 'transfer',
+                                        default => 'other'
+                                    };
+
+                                    $paymentId = null;
+                                    $affectedReceiptIds = [];
+
+                                    DB::transaction(function () use ($res, $record, $data, $methodForLedger, $bankId, $methodForm, $must, $pay, &$paymentId, &$affectedReceiptIds) {
+                                        $now = now();
+
+                                        // --- KUMPULKAN RECEIPT YANG AKAN DIBAYAR (sebelum di-update) ---
+                                        $q = \App\Models\MinibarReceipt::query()->where('reservation_guest_id', $record->id);
+                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'status')) {
+                                            $q->where('status', '!=', 'PAID');
+                                        } elseif (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) {
+                                            $q->where(fn($z) => $z->whereNull('is_paid')->orWhere('is_paid', false));
+                                        }
+                                        $affectedReceiptIds = $q->pluck('id')->all();
+
+                                        // 1) Payment
+                                        $payment = \App\Models\Payment::create([
+                                            'hotel_id'             => (int) $res->hotel_id,
+                                            'reservation_id'       => (int) $res->id,
+                                            'reservation_guest_id' => (int) $record->id,
+                                            'bank_id'              => $bankId,
+                                            'amount'               => $pay,
+                                            'actual_amount'        => $must,
+                                            'method'               => $methodForm,
+                                            'payment_date'         => $now,
+                                            'notes'                => (string) ($data['note'] ?? 'Split Minibar'),
+                                            'created_by'           => \Illuminate\Support\Facades\Auth::id(),
+                                        ]);
+                                        $paymentId = (int) $payment->id;
+
+                                        // 2) Ledger
+                                        $entryDate   = $now->toDateString();
+                                        $desc        = 'Split Minibar #' . ($res->reservation_no ?? $res->id) . '/RG#' . $record->id;
+
+                                        $change      = max(0, $pay - $must);
+                                        $amountInNet = min($pay, $must);
+
+                                        if ($methodForLedger === 'cash' || empty($bankId)) {
+                                            AccountLedger::create([
+                                                'hotel_id'        => (int) $res->hotel_id,
+                                                'ledger_type'     => 'room',
+                                                'reference_table' => 'payments',
+                                                'reference_id'    => (int) $payment->id,
+                                                'account_code'    => 'CASH_ON_HAND',
+                                                'method'          => 'cash',
+                                                'debit'           => $amountInNet,
+                                                'credit'          => 0,
+                                                'date'            => $entryDate,
+                                                'description'     => $desc . ' (receipt)',
+                                                'is_posted'       => true,
+                                                'posted_at'       => $now,
+                                                'posted_by'       => Auth::id(),
+                                            ]);
+                                            if ($change > 0) {
+                                                AccountLedger::create([
+                                                    'hotel_id'        => (int) $res->hotel_id,
+                                                    'ledger_type'     => 'room',
+                                                    'reference_table' => 'payments',
+                                                    'reference_id'    => (int) $payment->id,
+                                                    'account_code'    => 'CASH_ON_HAND',
+                                                    'method'          => 'cash',
+                                                    'debit'           => 0,
+                                                    'credit'          => $change,
+                                                    'date'            => $entryDate,
+                                                    'description'     => $desc . ' (change returned)',
+                                                    'is_posted'       => true,
+                                                    'posted_at'       => $now,
+                                                    'posted_by'       => Auth::id(),
+                                                ]);
+                                            }
+                                        } else {
+                                            BankLedger::create([
+                                                'hotel_id'        => (int) $res->hotel_id,
+                                                'bank_id'         => (int) $bankId,
+                                                'deposit'         => $amountInNet,
+                                                'withdraw'        => 0,
+                                                'date'            => $entryDate,
+                                                'description'     => $desc . ' (receipt)',
+                                                'method'          => $methodForLedger,
+                                                'ledger_type'     => 'room',
+                                                'reference_table' => 'payments',
+                                                'reference_id'    => (int) $payment->id,
+                                                'is_posted'       => true,
+                                                'posted_at'       => $now,
+                                                'posted_by'       => Auth::id(),
+                                            ]);
+                                            if ($change > 0) {
+                                                BankLedger::create([
+                                                    'hotel_id'        => (int) $res->hotel_id,
+                                                    'bank_id'         => (int) $bankId,
+                                                    'deposit'         => 0,
+                                                    'withdraw'        => $change,
+                                                    'date'            => $entryDate,
+                                                    'description'     => $desc . ' (refund/change)',
+                                                    'method'          => $methodForLedger,
+                                                    'ledger_type'     => 'room',
+                                                    'reference_table' => 'payments',
+                                                    'reference_id'    => (int) $payment->id,
+                                                    'is_posted'       => true,
+                                                    'posted_at'       => $now,
+                                                    'posted_by'       => Auth::id(),
+                                                ]);
+                                            }
+                                        }
+
+                                        // 3) Tandai MINIBAR receipt yang belum dibayar → PAID
+                                        $upd = [];
+                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'is_paid')) $upd['is_paid'] = true;
+                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'status'))  $upd['status']  = 'PAID';
+                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_at')) $upd['paid_at'] = $now;
+                                        if (\Illuminate\Support\Facades\Schema::hasColumn('minibar_receipts', 'paid_by')) $upd['paid_by'] = \Illuminate\Support\Facades\Auth::id();
+
+                                        if (!empty($upd) && !empty($affectedReceiptIds)) {
+                                            \App\Models\MinibarReceipt::whereIn('id', $affectedReceiptIds)->update($upd);
+                                        }
+                                    });
+
+                                    \Filament\Notifications\Notification::make()->title('Split Minibar posted.')->success()->send();
+
+                                    // === BUKA PRINT ===
+                                    // Jika hanya 1 receipt → pakai route single
+                                    if (count($affectedReceiptIds) === 1) {
+                                        $url = route('minibar-receipts.print', ['receipt' => $affectedReceiptIds[0]]);
+                                    } else {
+                                        // Banyak receipt → pakai bulk note (lihat Route B di bawah)
+                                        $url = route('minibar-receipts.print-bulk', [
+                                            'ids' => implode(',', $affectedReceiptIds),
+                                            'pid' => $paymentId,               // opsional, untuk tampilkan blok payment
+                                        ]);
+                                    }
+
+                                    $livewire->js("window.open(" . json_encode($url) . ", '_blank', 'noopener,noreferrer')");
+                                })
+                                ->tooltip('Bayar hanya komponen Minibar (akan dikeluarkan dari Split Bill/C/O)'),
+
+                            // 5) Split Bill
+                            Action::make('split_bill')
                                 ->label('Split Bill')
                                 ->icon('heroicon-o-scissors')
                                 ->color('warning')
                                 ->button()
+                                ->disabled(fn(\App\Models\ReservationGuest $record) => filled($record->actual_checkout))
                                 ->mountUsing(function (
                                     \App\Models\ReservationGuest $record,
                                     \Filament\Actions\Action $action,
                                     \Livewire\Component $livewire
                                 ) {
-                                    $alreadySplit = \App\Models\Payment::query()
-                                        ->where('reservation_id', $record->reservation_id)
-                                        ->where('reservation_guest_id', $record->id)
-                                        ->exists();
-
-                                    if ($alreadySplit) {
-                                        $url = route('reservation-guests.bill', $record) . '?mode=single';
-                                        $livewire->js("window.open('{$url}', '_blank', 'noopener,noreferrer')");
-                                        $action->halt();
-                                        return;
-                                    }
-
                                     // seed nilai awal - gunakan fungsi yang SAMA dengan blade view
                                     $actual = self::calculateSplitAmount($record);
 
@@ -399,20 +585,14 @@ final class ReservationGuestCheckOutForm
                                     $livewire->js("window.open('" . route('reservation-guests.bill', $record) . "?mode=single','_blank','noopener,noreferrer')");
                                 })
                                 ->tooltip('Pisahkan tagihan untuk tamu ini'),
-                        ])->columns(1)->columnSpan(3)->alignment('center'),
 
-                        // ===================== Payment & Check Out =====================
-                        SchemaActions::make([
+                            // 6) C/O
                             Action::make('pay_and_checkout_adv')
                                 ->label('C/O')
                                 ->icon('heroicon-o-credit-card')
                                 ->color('success')
                                 ->button()
-                                ->disabled(function (\App\Models\ReservationGuest $record): bool {
-                                    $hasActualCheckout = filled($record->actual_checkout);
-                                    $hasPayment        = Payment::where('reservation_guest_id', $record->id)->exists();
-                                    return $hasActualCheckout || $hasPayment;
-                                })
+                                ->disabled(fn(\App\Models\ReservationGuest $record) => filled($record->actual_checkout))
                                 ->schema([
                                     Hidden::make('reservation_guest_id')
                                         ->default(fn(\App\Models\ReservationGuest $record) => $record->id),
@@ -476,7 +656,6 @@ final class ReservationGuestCheckOutForm
                                     return $data;
                                 })
                                 ->action(function (array $data, \App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
-
                                     $pay  = (int) ($data['amount'] ?? 0);
                                     $must = (int) ($data['actual_amount'] ?? 0);
 
@@ -754,74 +933,15 @@ final class ReservationGuestCheckOutForm
                                             ->danger()->send();
                                     }
                                 }),
-                        ])->columns(1)->columnSpan(3)->alignment('center'),
-
+                        ])
+                            ->columns(6)          // ⬅️ semua tombol 1 baris (wrap jika sempit)
+                            ->alignment('center') // ⬅️ rata tengah
+                            ->columnSpan(12),
                     ]),
                 ])
                 ->columnSpanFull(),
 
         ]);
-    }
-
-
-    /**
-     * Hitung detail breakdown untuk modal folio & print
-     */
-    private static function buildBreakdown(ReservationGuest $rg): array
-    {
-        $calc = ReservationMath::guestBill($rg, ['tz' => 'Asia/Makassar']);
-
-        $tz    = 'Asia/Makassar';
-        $start = $rg->actual_checkin ?? $rg->expected_checkin;
-        $end   = $rg->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-
-        $totalAll      = 0;
-        $totalChecked  = 0;
-        $checkedItems  = []; // <-- detail siapa & berapa
-
-        if ($rg->reservation) {
-            $allGuests = $rg->reservation->reservationGuests()->orderBy('id')->get();
-
-            foreach ($allGuests as $g) {
-                $calcG  = \App\Support\ReservationMath::guestBill($g, ['tz' => 'Asia/Makassar']);
-                $grandG = (int) ($calcG['grand'] ?? 0);
-
-                $totalAll += $grandG;
-
-                if (filled($g->actual_checkout)) {
-                    $totalChecked += $grandG;
-                    $checkedItems[] = [
-                        'guest_id'   => $g->id,
-                        'guest_name' => $g->guest?->name ?: ('RG#' . $g->id),
-                        'amount'     => $grandG,
-                    ];
-                }
-            }
-        }
-
-        $openDue = max(0, $totalAll - $totalChecked);
-
-        return [
-            'reservation_total_all'     => (int) $totalAll,
-            'reservation_total_checked' => (int) $totalChecked,
-            'reservation_open_due'      => (int) $openDue,
-            'checked_items'             => $checkedItems, // <-- baru
-            'rg'                => $rg,
-            'nights'            => $calc['nights'],
-            'rate_after_disc'   => (int) $calc['room_after_disc'],
-            'charge'            => (int) $calc['charge'],
-            'extra_bed'         => (int) $calc['extra'],
-            'late_penalty'      => (int) $calc['penalty'],
-            'tax_percent'       => (float) $calc['tax_percent'],
-            'tax_rp'            => (int) $calc['tax_rp'],
-            'grand_total'       => (int) $calc['grand'],
-            'deposit'           => (int) $calc['deposit'],
-
-            'arrive_at'         => $start ? \Illuminate\Support\Carbon::parse($start)->format('d/m/Y H:i') : '-',
-            'depart_at'         => $end   ? \Illuminate\Support\Carbon::parse($end)->format('d/m/Y H:i')   : '-',
-            'guest_name'        => $rg->guest?->name,
-            'room_no'           => $rg->room?->room_no,
-        ];
     }
 
     /**
@@ -830,165 +950,13 @@ final class ReservationGuestCheckOutForm
      */
     private static function calculateSplitAmount(\App\Models\ReservationGuest $record): int
     {
-        $res = $record->reservation;
-
-        if (! $res) {
-            return 0;
-        }
-
-        $tz = 'Asia/Makassar';
-        $allGuests = $res->reservationGuests()->orderBy('id')->get();
-
-        // Map minibar per RG
-        $minibarMap = [];
-        $ids = $allGuests->pluck('id')->all();
-        if (!empty($ids)) {
-            $minibarMap = \App\Models\MinibarReceipt::query()
-                ->whereIn('reservation_guest_id', $ids)
-                ->selectRaw('reservation_guest_id, SUM(total_amount) AS sum_total')
-                ->groupBy('reservation_guest_id')
-                ->pluck('sum_total', 'reservation_guest_id')
-                ->toArray();
-        }
-
-        // === 1) Hitung BASE untuk GUEST INI (tanpa pajak) ===
-        $in  = $record->actual_checkin ?: $record->expected_checkin;
-        $out = $record->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-        $n   = \App\Support\ReservationMath::nights($in, $out, 1);
-
-        $rate     = (float) \App\Support\ReservationMath::basicRate($record);
-        $discPct  = (float) ($record->discount_percent ?? 0);
-        $discAmt  = (int) round(($rate * $discPct) / 100);
-        $rateAfter = max(0, $rate - $discAmt);
-
-        $charge  = (int) ($record->charge ?? 0);
-        $extra   = (int) ($record->extra_bed_total ?? ((int) ($record->extra_bed ?? 0) * 100_000));
-        $mbSvc   = (int) ($minibarMap[$record->id] ?? 0);
-
-        $svcPct    = (float) ($record->reservation?->service_percent ?? 0);
-        $serviceRp = (int) round(($mbSvc * $svcPct) / 100);
-
-        $pen = \App\Support\ReservationMath::latePenalty(
-            $record->expected_checkin ?: ($record->reservation?->expected_arrival),
-            $record->actual_checkin,
-            $rate,
-            ['tz' => $tz],
-        );
-        $penalty = (int) ($pen['amount'] ?? 0);
-
-        $baseThis = (int) ($rateAfter * $n + $charge + $mbSvc + $serviceRp + $extra + $penalty);
-
-        // === 2) Hitung TOTAL BASE semua guest (untuk hitung proporsi pajak) ===
-        $totalBaseAll = 0;
-        foreach ($allGuests as $g) {
-            $inG  = $g->actual_checkin ?: $g->expected_checkin;
-            $outG = $g->actual_checkout ?: \Illuminate\Support\Carbon::now($tz);
-            $nG   = \App\Support\ReservationMath::nights($inG, $outG, 1);
-
-            $rateG     = (float) \App\Support\ReservationMath::basicRate($g);
-            $discPctG  = (float) ($g->discount_percent ?? 0);
-            $discAmtG  = (int) round(($rateG * $discPctG) / 100);
-            $rateAfterG = max(0, $rateG - $discAmtG);
-
-            $chargeG  = (int) ($g->charge ?? 0);
-            $extraG   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
-            $mbSvcG   = (int) ($minibarMap[$g->id] ?? 0);
-
-            $svcPctG    = (float) ($g->reservation?->service_percent ?? 0);
-            $serviceRpG = (int) round(($mbSvcG * $svcPctG) / 100);
-
-            $penG = \App\Support\ReservationMath::latePenalty(
-                $g->expected_checkin ?: ($g->reservation?->expected_arrival),
-                $g->actual_checkin,
-                $rateG,
-                ['tz' => $tz],
-            );
-            $penaltyG = (int) ($penG['amount'] ?? 0);
-
-            $baseG = (int) ($rateAfterG * $nG + $chargeG + $mbSvcG + $serviceRpG + $extraG + $penaltyG);
-            $totalBaseAll += $baseG;
-        }
-
-        // === 3) Alokasi pajak PROPORSIONAL untuk guest ini ===
-        $taxPct = (float) ($res?->tax?->percent ?? 0);
-        $totalTaxAll = (int) round(($totalBaseAll * $taxPct) / 100);
-
-        // Proporsi pajak = (base guest ini / total base semua) × total pajak
-        $taxForThis = 0;
-        if ($totalBaseAll > 0) {
-            $taxForThis = (int) round(($baseThis / $totalBaseAll) * $totalTaxAll);
-        }
-
-        $result = $baseThis + $taxForThis;
-
-        return $result;
+        $arr = \App\Support\ReservationMath::subtotalGuestBill($record);
+        return (int) ($arr['subtotal'] ?? 0);
     }
 
-    private static function dueNowForGuest(ReservationGuest $rg): int
+    private static function dueNowForGuest(\App\Models\ReservationGuest $rg): int
     {
-        $res = $rg->reservation;
-        if (! $res) {
-            return 0;
-        }
-
-        // Ambil semua RG dalam reservation ini (cukup eager load tax saja jika memang ada relasinya)
-        $guests = $res->reservationGuests()
-            ->with(['reservation.tax'])   // ⬅️ HAPUS 'reservation.service'
-            ->orderBy('id')
-            ->get();
-
-        $sumGrand     = 0; // TOTAL (Amount Due + Tax) semua tamu
-        $checkedGrand = 0; // TOTAL untuk tamu yang SUDAH checkout
-
-        foreach ($guests as $g) {
-            // Nights
-            $in  = $g->actual_checkin ?: $g->expected_checkin;
-            $out = $g->actual_checkout ?: now('Asia/Makassar');
-            $n   = \App\Support\ReservationMath::nights($in, $out, 1);
-
-            // Basic rate & diskon
-            $rate     = (float) \App\Support\ReservationMath::basicRate($g);
-            $discPct  = (float) ($g->discount_percent ?? 0);
-            $discAmt  = (int) round(($rate * $discPct) / 100);
-            $rateAfter = max(0, $rate - $discAmt);
-
-            // Komponen lain
-            $charge  = (int) ($g->charge ?? 0);
-            $extra   = (int) ($g->extra_bed_total ?? ((int) ($g->extra_bed ?? 0) * 100_000));
-
-            // Penalty (prioritaskan expected_checkin RG)
-            $pen = \App\Support\ReservationMath::latePenalty(
-                $g->expected_checkin ?: ($g->reservation?->expected_arrival),
-                $g->actual_checkin,
-                $rate,
-                ['tz' => 'Asia/Makassar'],
-            );
-            $penalty = (int) ($pen['amount'] ?? 0);
-
-            // Minibar subtotal per-RG
-            $minibarSub = (int) \App\Models\MinibarReceiptItem::query()
-                ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $g->id))
-                ->sum('line_total');
-
-            // Service dihitung dari subtotal minibar × service_percent (field di reservations)
-            $svcPct    = (float) ($g->reservation?->service_percent ?? 0);
-            $serviceRp = (int) round(($minibarSub * $svcPct) / 100);
-
-            // Pajak & GRAND
-            $taxPct  = (float) ($g->reservation?->tax?->percent ?? 0);
-            $taxBase = (int) ($rateAfter * $n + $charge + $minibarSub + $serviceRp + $extra + $penalty);
-            $taxRp   = (int) round(($taxBase * $taxPct) / 100);
-            $grand   = (int) ($taxBase + $taxRp);
-
-            $sumGrand += $grand;
-            if (filled($g->actual_checkout)) {
-                $checkedGrand += $grand;
-            }
-        }
-
-        // Amount to pay now (sesuai blade: total seluruh tamu dikurangi yang sudah checkout)
-        $remaining = max(0, $sumGrand - $checkedGrand);
-
-        return $remaining;
+        $agg = \App\Support\ReservationMath::aggregateGuestInfoFooter($rg);
+        return (int) ($agg['to_pay_now'] ?? 0);
     }
 }

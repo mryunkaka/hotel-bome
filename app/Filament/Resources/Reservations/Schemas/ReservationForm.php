@@ -450,7 +450,7 @@ class ReservationForm
 
                                         // Sekalian isi deposit 50% dari rate
                                         $half = (float) $price * 0.5;
-                                        $set('deposit_room', 0);
+                                        $set('deposit_room', $half);
                                         $set('deposit_card', $half);
                                     })
                                     ->options(function (Get $get) {
@@ -679,7 +679,7 @@ class ReservationForm
                                     ->afterStateUpdated(function ($state, callable $set) {
                                         $rate = (float) ($state ?? 0);
                                         $half = $rate * 0.5;
-                                        $set('deposit_room', 0);
+                                        $set('deposit_room', $half);
                                         $set('deposit_card', $half);
                                     })
                                     // Disabled jika Charge To ≠ COMPLIMENTARY
@@ -791,16 +791,14 @@ class ReservationForm
                                 ->visible(function (array $arguments, $livewire) {
                                     $itemKey = data_get($arguments, 'item');
                                     $id = (int) data_get($livewire, "data.reservationGuests.{$itemKey}.id");
+                                    if ($id <= 0) return false;
 
-                                    if ($id <= 0) {
-                                        return false;
-                                    }
+                                    $actualCheckin = data_get($livewire, "data.reservationGuests.{$itemKey}.actual_checkin");
+                                    if ($actualCheckin !== null && $actualCheckin !== '') return false;
 
-                                    // Ambil dari state repeater apakah sudah ada checkout
-                                    $actualCheckout = data_get($livewire, "data.reservationGuests.{$itemKey}.actual_checkout");
-
-                                    // Hanya tampil jika BELUM checkout
-                                    return empty($actualCheckout);
+                                    // Fallback DB
+                                    $rg = \App\Models\ReservationGuest::query()->select('actual_checkin')->find($id);
+                                    return !($rg && $rg->actual_checkin);
                                 })
                                 ->action(function (array $arguments, $livewire) {
                                     // Ambil ID dari state repeater

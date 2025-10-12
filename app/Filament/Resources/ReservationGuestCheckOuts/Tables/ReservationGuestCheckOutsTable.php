@@ -25,8 +25,8 @@ class ReservationGuestCheckOutsTable
                     ->dateTime('d/m/Y H:i')
                     ->sortable(),
 
-                TextColumn::make('actual_checkout')
-                    ->label('Actual Check-out')
+                TextColumn::make('expected_checkout')
+                    ->label('Expected Check-out')
                     ->dateTime('d/m/Y H:i')
                     ->sortable(),
 

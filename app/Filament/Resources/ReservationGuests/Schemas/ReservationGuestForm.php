@@ -218,7 +218,6 @@ final class ReservationGuestForm
                                     ->visible(fn(\App\Models\ReservationGuest $record) => blank($record->actual_checkin))
                                     // tidak ada schema/form -> tidak muncul modal
                                     ->action(function (\App\Models\ReservationGuest $record, \Livewire\Component $livewire) {
-
                                         DB::transaction(function () use ($record) {
                                             $reservation = $record->reservation()->lockForUpdate()->first();
                                             if (! $reservation) {
@@ -259,12 +258,29 @@ final class ReservationGuestForm
                                         // ⇩⇩ Tampilkan halaman print dalam MODE SINGLE
                                         $printUrl = route('reservation-guests.print', [
                                             'guest' => $record->getKey(),
-                                            'mode'  => 'single', // <- penting
+                                            'mode'  => 'single',
                                         ]);
-
                                         $livewire->js("window.open('{$printUrl}', '_blank', 'noopener,noreferrer');");
 
-                                        $url = \App\Filament\Resources\ReservationGuests\ReservationGuestResource::getUrl('index');
+                                        // === Redirect logic sesuai permintaan ===
+                                        $reservationId = (int) ($record->reservation_id ?? 0);
+
+                                        // Cek apakah MASIH ADA RG dalam reservation ini yang belum check-in (null/0/'0000-00-00 00:00:00')
+                                        $stillHasNotCheckedIn = \App\Models\ReservationGuest::query()
+                                            ->where('reservation_id', (int) $record->reservation_id)
+                                            ->whereNull('actual_checkin')
+                                            ->exists();
+
+                                        if ($stillHasNotCheckedIn) {
+                                            // Arahkan ke halaman edit reservation (contoh URL yang Anda minta)
+                                            $url = "https://hotel-bome.test/admin/reservations/{$reservationId}/edit";
+                                        } else {
+                                            // Jika semua RG sudah punya actual_checkin → ke index Reservation Guests
+                                            $url = "https://hotel-bome.test/admin/reservation-guests";
+                                            // Atau gunakan resource route:
+                                            // $url = \App\Filament\Resources\ReservationGuests\ReservationGuestResource::getUrl('index');
+                                        }
+
                                         if (method_exists($livewire, 'redirect')) {
                                             $livewire->redirect($url, navigate: true);
                                         } else {

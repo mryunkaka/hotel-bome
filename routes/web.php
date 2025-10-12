@@ -7,6 +7,7 @@ use App\Models\Guest;
 use App\Models\Hotel;
 use App\Models\Booking;
 use App\Models\Invoice;
+use App\Models\Payment;
 use App\Models\BankLedger;
 use App\Models\IncomeItem;
 use App\Models\Reservation;
@@ -107,24 +108,26 @@ Route::patch('/admin/rooms/{room}/quick-status', function (Request $request, Roo
     return back()->with('room-status-updated', true);
 })->name('rooms.quick-status')->middleware(['web', 'auth']);
 
-// === GUEST BILL: 1 route untuk HTML (?html=1) & PDF (default) ===
 Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest $guest) {
-    // Muat reservation + relasi yang dibutuhkan (tax ada di reservation)
-    $reservation = $guest->reservation()->with([
-        'guest:id,name,salutation,address,city,phone,email',
-        'group:id,name,address,city,phone,handphone,fax,email',
-        'creator:id,name',
-        'tax:id,percent',
-    ])->firstOrFail();
 
-    // Pastikan RG terpilih punya relasi yang dipakai di blade
+    // ==== Relasi minimum yang dipakai di view ====
+    $reservation = $guest->reservation()
+        ->with([
+            'guest:id,name,salutation,address,city,phone,email',
+            'group:id,name,address,city,phone,handphone,fax,email',
+            'creator:id,name',
+            'tax:id,percent',
+        ])
+        ->firstOrFail();
+
+    // Pastikan RG terpilih punya relasi yang dipakai label/identitas di view
     $guest->load([
-        'guest:id,name',
+        'guest:id,name',                 // ⬅️ display_name DIHAPUS
         'room:id,room_no,type,price',
         'reservation.tax',
     ]);
 
-    // Hotel aktif (untuk logo & header)
+    // ==== Hotel aktif (untuk header/logo) ====
     $hid   = (int) (session('active_hotel_id') ?? ($reservation->hotel_id ?? 0));
     $hotel = Hotel::find($hid);
 
@@ -142,118 +145,100 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
                     $logoData = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($full));
                 }
             } catch (\Throwable $e) {
-                // ignore logo error
+                // abaikan error logo
             }
         }
     }
 
-    // Perhitungan bill (konsisten dgn helper)
-    $calc   = ReservationMath::guestBill($guest, ['tz' => 'Asia/Makassar']);
-    $nights = max(1, (int) ($calc['nights'] ?? 1));
-    $rate   = (int)  ($calc['rate'] ?? 0);
-
-    $discPct   = (float) ($calc['disc_percent'] ?? 0);
-    $afterDisc = (int)  ($calc['rate_after_disc_per_night'] ?? 0);
-    $roomDisc  = (int)  ($calc['room_after_disc'] ?? 0);
-
-    // ⚠️ gunakan charge, bukan service
-    $chargeRp  = (int)  ($calc['charge'] ?? 0);
-
-    $extraRp   = (int)  ($calc['extra'] ?? 0);
-    $penaltyRp = (int)  ($calc['penalty'] ?? 0);
-
-    $taxPct    = (float) ($reservation->tax?->percent ?? ($calc['tax_percent'] ?? 0));
-    $taxRp     = (int)  ($calc['tax_rp'] ?? 0);
-
-    $subtotalBeforeTax = $roomDisc + $chargeRp + $extraRp + $penaltyRp;
-    $grand             = (int) ($calc['grand'] ?? ($subtotalBeforeTax + $taxRp));
-
-    // Pakai deposit card jika ada
-    $depositCard = (int) ($reservation->deposit_card ?? $reservation->deposit ?? 0);
-    $balance     = max(0, $grand - $depositCard);
-
-    // Data untuk view
+    // ==== Parameter UI ====
     $orientation = in_array(strtolower(request('o', 'portrait')), ['portrait', 'landscape'], true)
         ? strtolower(request('o', 'portrait'))
         : 'portrait';
 
-    // Tentukan mode (all / single)
     $mode = strtolower((string) request('mode', 'single'));
-    if (! in_array($mode, ['all', 'single'], true)) {
+    if (! in_array($mode, ['all', 'single', 'remaining'], true)) {
         $mode = 'single';
     }
 
-    // guests yang dikirim ke blade:
-    // - mode=all   → semua RG dalam reservation
-    // - mode=single→ hanya RG terpilih
-    if ($mode === 'all') {
-        $allGuests = $reservation->reservationGuests()
-            ->with(['guest:id,name', 'room:id,room_no,type,price', 'reservation.tax'])
+    // ==== Dataset guests yang akan dicetak ====
+    if ($mode === 'all' || $mode === 'remaining') {
+        $guestsForView = $reservation->reservationGuests()
+            ->with([
+                'guest:id,name',          // ⬅️ display_name DIHAPUS
+                'room:id,room_no,type,price',
+                'reservation.tax',
+            ])
             ->orderBy('id')
             ->get();
-        $guestsForView = $allGuests;
     } else {
         $guestsForView = collect([$guest]);
     }
 
-    // ============================================================
-    // === TAMBAHAN: Split khusus PAJAK (hanya untuk mode=all) ====
-    // ============================================================
+    // ==== View-model baris tabel (NO math di blade) ====
+    $rows = $guestsForView->map(
+        fn(ReservationGuest $g) => ReservationMath::billRow($g) // pastikan billRow() mengembalikan 'guest_name' dari $g->guest->name
+    )->all();
+
+    // ==== Aggregate/footer untuk tabel (pakai RG pertama sebagai konteks) ====
+    $contextRg = $guestsForView->first() ?: $guest;
+    $agg       = ReservationMath::aggregateGuestInfoFooter($contextRg);
+
+    // ==== Tax share (bila butuh logika split di blade) ====
+    $taxShare = ReservationMath::taxShareForReservationBilling($contextRg);
+
+    // ==== Breakdown angka untuk header kanan (RG terpilih) ====
+    $b   = ReservationMath::guestBaseForBilling($guest);
+    $dep = ReservationMath::deposits($guest);
+    $taxPerGuest = (int) ($taxShare['tax_per_guest'] ?? 0);
+
+    $billGrand  = (int) ($b['base'] + $taxPerGuest);
+    $balance    = max(0, $billGrand - (int) $dep['total']);
+
+    // ==== (Opsional) Split sekadar info (mode=all) ====
     $split = [
         'enabled'        => false,
         'guest_count'    => 0,
         'split_count'    => 0,
-        'tax_total'      => 0,  // total pajak reservation (agregat semua RG)
-        'tax_share'      => 0,  // pajak/guest (dibagi rata)
-        'less_total'     => 0,  // total pajak yang sudah “diambil” via split
-        'to_pay_now'     => 0,  // TOTAL - less_total
+        'tax_total'      => (int) ($taxShare['tax_total'] ?? 0),
+        'tax_share'      => (int) ($taxShare['tax_per_guest'] ?? 0),
+        'less_total'     => 0,
+        'to_pay_now'     => 0,
     ];
 
     if ($mode === 'all') {
-        // Pakai koleksi yang sudah di-load di atas (hemat query)
-        $allForCalc = isset($allGuests) ? $allGuests : $reservation->reservationGuests()->with('reservation.tax')->get();
-
-        $sumGrandAll = 0;
-        $sumTaxAll   = 0;
-
-        foreach ($allForCalc as $gx) {
-            $cx = \App\Support\ReservationMath::guestBill($gx, ['tz' => 'Asia/Makassar']);
-            $sumGrandAll += (int) ($cx['grand']  ?? 0);
-            $sumTaxAll   += (int) ($cx['tax_rp'] ?? 0);
-        }
-
-        $guestCount = max(1, $allForCalc->count());
-
-        // Hitung jumlah RG yang ditandai "split" (pakai Payment marker method=SPLIT)
-        $splitCount = \App\Models\Payment::query()
+        $guestCount = max(1, (int) ($taxShare['count'] ?? $guestsForView->count()));
+        // marker contoh (jika Anda memang pakai Payment method=SPLIT):
+        $splitCount = Payment::query()
             ->where('reservation_id', $reservation->id)
             ->where('method', 'SPLIT')
             ->count();
 
-        if ($splitCount > 0 && $sumTaxAll > 0) {
-            // Bagi rata HANYA pajak total ke jumlah tamu
-            $taxShare   = (int) floor($sumTaxAll / $guestCount);
-            $lessTotal  = (int) min($sumGrandAll, $taxShare * $splitCount);
-            $toPayNow   = (int) max(0, $sumGrandAll - $lessTotal);
+        if ($splitCount > 0 && ($taxShare['tax_total'] ?? 0) > 0) {
+            $lessTotal = (int) min(
+                (int) $agg['total_due_all'],
+                (int) ($taxShare['tax_per_guest'] ?? 0) * $splitCount
+            );
+            $toPayNow = (int) max(0, (int) $agg['total_due_all'] - $lessTotal);
 
             $split = [
                 'enabled'        => true,
                 'guest_count'    => $guestCount,
                 'split_count'    => $splitCount,
-                'tax_total'      => $sumTaxAll,
-                'tax_share'      => $taxShare,
+                'tax_total'      => (int) ($taxShare['tax_total'] ?? 0),
+                'tax_share'      => (int) ($taxShare['tax_per_guest'] ?? 0),
                 'less_total'     => $lessTotal,
                 'to_pay_now'     => $toPayNow,
             ];
         }
     }
-    // ====================== (akhir tambahan) =====================
 
+    // ==== Data untuk view ====
     $view = [
         'paper'       => 'A4',
         'orientation' => $orientation,
         'hotel'       => $hotel,
         'logoData'    => $logoData,
+
         'title'       => 'GUEST BILL',
         'invoiceId'   => $reservation->id,
         'invoiceNo'   => $reservation->reservation_no ?? ('#' . $reservation->id),
@@ -261,45 +246,49 @@ Route::get('/admin/reservation-guests/{guest}/bill', function (ReservationGuest 
         'clerkName'   => $reservation->creator?->name,
         'reservation' => $reservation,
 
-        // Header info tamu/kamar (RG terpilih)
+        // Identitas ringkas RG terpilih
         'row' => [
-            'guest_display' => $guest->guest?->display_name ?? $guest->guest?->name,
+            'guest_display' => $guest->guest?->name ?? '-',  // ⬅️ pakai name saja
             'room_no'       => $guest->room?->room_no,
             'category'      => $guest->room?->type,
-            'ps'            => (int) ($guest->jumlah_orang ?? max(1, (int) $guest->male + (int) $guest->female + (int) $guest->children)),
-            'actual_in'     => $guest->actual_checkin,
+            'ps'            => (int) ($guest->jumlah_orang
+                ?? ((int) ($guest->male ?? 0) + (int) ($guest->female ?? 0) + (int) ($guest->children ?? 0))),
+            'actual_in'     => $guest->actual_checkin ?: $guest->expected_checkin,
             'actual_out'    => $guest->actual_checkout ?: $guest->expected_checkout,
         ],
 
-        // Breakdown angka (RG terpilih)
+        // Breakdown angka RG terpilih (semua dari ReservationMath)
         'bill' => [
-            'rate'                  => $rate,
-            'nights'                => $nights,
-            'discount_percent'      => $discPct,
-            'after_disc_per_night'  => $afterDisc,
-            'room_after_disc'       => $roomDisc,
-            'charge'                => $chargeRp,  // <- charge
-            'extra'                 => $extraRp,
-            'penalty'               => $penaltyRp,
-            'subtotal_before_tax'   => $subtotalBeforeTax,
-            'tax_percent'           => $taxPct,
-            'tax_rp'                => $taxRp,
-            'grand'                 => $grand,
-            'deposit_card'          => $depositCard,
-            'balance'               => $balance,
+            'rate'                  => (int) $b['rate'],
+            'nights'                => (int) $b['nights'],
+            'discount_percent'      => (float) $b['disc_percent'],
+            'after_disc_per_night'  => (int) $b['rate_after'],
+            'room_after_disc'       => (int) $b['rate_after_times_nights'],
+            'charge'                => (int) $b['charge'],
+            'service'               => (int) $b['service_minibar_unpaid'],
+            'extra'                 => (int) $b['extra'],
+            'penalty'               => (int) $b['penalty'],
+            'subtotal_before_tax'   => (int) $b['base'],
+            'tax_percent'           => (float) ($taxShare['percent'] ?? ($reservation->tax?->percent ?? 0)),
+            'tax_rp'                => (int) $taxPerGuest,
+            'grand'                 => (int) $billGrand,
+            'deposit_room'          => (int) $dep['room'],
+            'deposit_card'          => (int) $dep['card'],
+            'deposit_total'         => (int) $dep['total'],
+            'balance'               => (int) $balance,
         ],
 
-        // guests (bisa 1 atau semua, tergantung mode)
-        'guests' => $guestsForView,
+        // tabel/loop & aggregate
+        'rows'     => $rows,
+        'agg'      => $agg,
+        'taxShare' => $taxShare,
 
-        // kirim mode ke blade agar footer & pembagian tax bisa disesuaikan
+        // mode cetak & split info
         'mode'  => $mode,
-
-        // kirim info split (baru)
         'split' => $split,
     ];
 
-    // Preview HTML ?html=1, selain itu render PDF inline
+    // ==== Render ====
     if (request()->boolean('html')) {
         return response()->view('prints.reservations.bill', $view);
     }

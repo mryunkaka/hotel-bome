@@ -33,7 +33,7 @@
 .rb-head {
   background:#f3f4f6;
   padding:6px 10px;
-  font:700 10px/1.2 system-ui,Arial; /* naikkan line-height sedikit */
+  font:700 7px/1.2 system-ui,Arial; /* naikkan line-height sedikit */
   display:flex;
   justify-content:space-between;
   align-items:flex-start; /* biar teks bisa ke atas */

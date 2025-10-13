@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\Room;
 use App\Models\MinibarReceipt;
 use Illuminate\Support\Carbon;
 use App\Models\ReservationGuest;
@@ -666,5 +667,47 @@ final class ReservationMath
         return (int) MinibarReceiptItem::query()
             ->whereHas('receipt', fn($q) => $q->where('reservation_guest_id', $g->id))
             ->sum('line_total');
+    }
+
+    /**
+     * Harga setelah diskon % (dibulatkan ke integer rupiah).
+     */
+    public static function discountedPrice(float|int|null $base, float|int|null $pct): int
+    {
+        $b = max(0.0, (float) ($base ?? 0));
+        $p = max(0.0, min(100.0, (float) ($pct ?? 0)));
+        return (int) round($b - ($b * ($p / 100)));
+    }
+
+    /**
+     * Hitung rate & deposit dari HARGA DASAR (bukan dari room_id).
+     * - Complimentary  -> rate=0, deposit=0
+     * - Non-complimentary -> deposit = 50% dari rate setelah diskon
+     */
+    public static function rateDepositFromPrice(float|int|null $price, float|int|null $discountPct, string $person): array
+    {
+        if (strtoupper(trim($person)) === 'COMPLIMENTARY') {
+            return ['rate' => 0, 'deposit' => 0];
+        }
+
+        $rate = self::discountedPrice((float) ($price ?? 0), (float) ($discountPct ?? 0));
+        $deposit = (int) round($rate * 0.5);
+
+        return ['rate' => $rate, 'deposit' => $deposit];
+    }
+
+    /**
+     * Hitung rate & deposit dari ROOM (ambil price dari DB).
+     * - Jika room tidak ditemukan, dianggap 0.
+     * - Ikut aturan complimentary & diskon seperti di atas.
+     */
+    public static function rateDepositFromRoom(?int $roomId, float|int|null $discountPct, string $person): array
+    {
+        $price = 0.0;
+        if ($roomId) {
+            $price = (float) (Room::whereKey($roomId)->value('price') ?? 0);
+        }
+
+        return self::rateDepositFromPrice($price, $discountPct, $person);
     }
 }

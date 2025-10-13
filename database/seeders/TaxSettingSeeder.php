@@ -23,6 +23,7 @@ class TaxSettingSeeder extends Seeder
                 'hotel_id'   => $hotelId,
                 'name'       => 'Default Tax',
                 'is_active'  => true,
+                'percent'    => 11,
                 'created_at' => now(),
                 'updated_at' => now(),
             ];

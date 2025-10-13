@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use Carbon\Carbon;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Facades\DB;
@@ -9,31 +10,38 @@ use Illuminate\Support\Facades\Schema;
 
 class DashboardOccupancyStats extends BaseWidget
 {
-    // ⛔ HAPUS "static"
     protected ?string $heading = 'Okupansi Kamar';
-    // opsional: atur lebar widget (juga non-static di v4)
     protected int|string|array $columnSpan = 'full';
 
     protected function getStats(): array
     {
         $hid = (int) (session('active_hotel_id') ?? 0);
+        $today = Carbon::today();
 
         $roomsTotal = $this->count('rooms', $hid);
 
-        // kamar terisi = DISTINCT room_id pada bookings yg belum checked_out
-        $occupied = DB::table('bookings')
-            ->when($hid, fn($q) => $q->where('hotel_id', $hid))
-            ->whereNull('deleted_at')
-            ->where('status', '!=', 'checked_out')
-            ->distinct('room_id')
-            ->count('room_id');
+        // Occupied = booking aktif hari ini (bukan canceled) & belum soft-deleted
+        $occupied = 0;
+        if (Schema::hasTable('bookings')) {
+            $occupied = DB::table('bookings')
+                ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+                ->when(Schema::hasColumn('bookings', 'deleted_at'), fn($q) => $q->whereNull('deleted_at'))
+                ->whereNotIn('status', ['canceled'])
+                // aktif hari ini: check_in_at <= today < check_out_at
+                ->whereDate('check_in_at', '<=', $today)
+                ->whereDate('check_out_at', '>', $today)
+                ->distinct('room_id')
+                ->count('room_id');
+        }
 
         $available = max(0, $roomsTotal - $occupied);
 
+        $nf = fn($n) => number_format((int) $n, 0, ',', '.');
+
         return [
-            Stat::make('Total Kamar', number_format($roomsTotal)),
-            Stat::make('Terisi', number_format($occupied)),
-            Stat::make('Kosong', number_format($available)),
+            Stat::make('Total Kamar', $nf($roomsTotal)),
+            Stat::make('Terisi (aktif hari ini)', $nf($occupied))->color('warning'),
+            Stat::make('Kosong', $nf($available))->color('success'),
         ];
     }
 
@@ -44,11 +52,9 @@ class DashboardOccupancyStats extends BaseWidget
         }
 
         $q = DB::table($table);
-
-        if (Schema::hasColumn($table, 'hotel_id')) {
+        if ($hotelId && Schema::hasColumn($table, 'hotel_id')) {
             $q->where('hotel_id', $hotelId);
         }
-
         if (Schema::hasColumn($table, 'deleted_at')) {
             $q->whereNull('deleted_at');
         }

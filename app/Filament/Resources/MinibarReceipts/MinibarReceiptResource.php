@@ -19,7 +19,7 @@ use App\Filament\Resources\MinibarReceipts\Tables\MinibarReceiptsTable;
 
 class MinibarReceiptResource extends Resource
 {
-    use ForbidReceptionistResource;
+    // use ForbidReceptionistResource;
 
     protected static ?string $model = MinibarReceipt::class;
 

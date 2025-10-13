@@ -9,6 +9,7 @@ use Illuminate\Support\Arr;
 use Filament\Actions\Action;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
+use App\Support\ReservationMath;
 use Filament\Forms\Components\Radio;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -436,22 +437,26 @@ class ReservationForm
                                 Select::make('room_id')
                                     ->label('Room')
                                     ->native(false)
-                                    ->placeholder('Select Room')
                                     ->searchable()
                                     ->required()
                                     ->live()
-                                    ->afterStateUpdated(function ($state, callable $set) {
+                                    ->afterStateUpdated(function ($state, callable $set, Get $get) {
                                         if (! $state) return;
 
-                                        $price = \App\Models\Room::whereKey($state)->value('price') ?? 0;
+                                        // Jika complimentary → jangan timpa rate manual
+                                        if (($get('person') ?? '') === 'COMPLIMENTARY') {
+                                            return;
+                                        }
 
-                                        // Auto fill room_rate
-                                        $set('room_rate', (int) $price);
+                                        $calc = ReservationMath::rateDepositFromRoom(
+                                            (int) $state,
+                                            (float) ($get('discount_percent') ?? 0),
+                                            (string) ($get('person') ?? '')
+                                        );
 
-                                        // Sekalian isi deposit 50% dari rate
-                                        $half = (float) $price * 0.5;
-                                        $set('deposit_room', $half);
-                                        $set('deposit_card', $half);
+                                        $set('room_rate',    $calc['rate']);
+                                        $set('deposit_room', $calc['deposit']);
+                                        $set('deposit_card', $calc['deposit']);
                                     })
                                     ->options(function (Get $get) {
                                         $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
@@ -652,37 +657,40 @@ class ReservationForm
                                         'COMPLIMENTARY'    => 'Complimentary',
                                     ])
                                     ->default('PERSONAL ACCOUNT')
-                                    ->live() // penting: agar on-change langsung mempengaruhi room_rate
+                                    ->live()
                                     ->afterStateUpdated(function ($state, callable $set, Get $get) {
-                                        // Jika Complimentary → rate = 0
                                         if ($state === 'COMPLIMENTARY') {
                                             $set('room_rate', 0);
+                                            $set('deposit_room', 0);
+                                            $set('deposit_card', 0);
                                             return;
                                         }
 
-                                        // Selain Complimentary → rate terkunci & auto isi dari harga kamar
-                                        $roomId = (int) ($get('room_id') ?? 0);
-                                        if ($roomId > 0) {
-                                            $price = \App\Models\Room::whereKey($roomId)->value('price');
-                                            if ($price !== null) {
-                                                $set('room_rate', (int) $price);
-                                            }
+                                        $calc = ReservationMath::rateDepositFromRoom(
+                                            (int) ($get('room_id') ?? 0),
+                                            (float) ($get('discount_percent') ?? 0),
+                                            (string) $state
+                                        );
+
+                                        if (($get('room_id') ?? 0) > 0) {
+                                            $set('room_rate',    $calc['rate']);
+                                            $set('deposit_room', $calc['deposit']);
+                                            $set('deposit_card', $calc['deposit']);
                                         }
                                     })
                                     ->columnSpan(2),
+
                                 TextInput::make('room_rate')
                                     ->label('Rate')
                                     ->numeric()
-                                    ->placeholder('Auto from room')
                                     ->minValue(0)
-                                    ->live()
+                                    ->live(onBlur: true)
                                     ->afterStateUpdated(function ($state, callable $set) {
-                                        $rate = (float) ($state ?? 0);
+                                        $rate = is_numeric($state) ? (float) $state : 0;
                                         $half = $rate * 0.5;
                                         $set('deposit_room', $half);
                                         $set('deposit_card', $half);
                                     })
-                                    // Disabled jika Charge To ≠ COMPLIMENTARY
                                     ->disabled(fn(Get $get) => ($get('person') ?? '') !== 'COMPLIMENTARY')
                                     ->dehydrated(true)
                                     ->columnSpan(2),
@@ -704,10 +712,43 @@ class ReservationForm
                                 TextInput::make('discount_percent')
                                     ->label('Discount (%)')
                                     ->numeric()
+                                    ->step('0.01')
                                     ->minValue(0)
                                     ->maxValue(100)
                                     ->default(0)
                                     ->suffix('%')
+                                    ->live(onBlur: true)
+                                    ->afterStateHydrated(function ($state, callable $set, Get $get) {
+                                        // Abaikan jika complimentary
+                                        if (($get('person') ?? '') === 'COMPLIMENTARY') return;
+
+                                        $calc = ReservationMath::rateDepositFromRoom(
+                                            (int) ($get('room_id') ?? 0),
+                                            (float) ($state ?? 0),
+                                            (string) ($get('person') ?? '')
+                                        );
+
+                                        if (($get('room_id') ?? 0) > 0) {
+                                            $set('room_rate',     $calc['rate']);
+                                            $set('deposit_room',  $calc['deposit']);
+                                            $set('deposit_card',  $calc['deposit']);
+                                        }
+                                    })
+                                    ->afterStateUpdated(function ($state, callable $set, Get $get) {
+                                        if (($get('person') ?? '') === 'COMPLIMENTARY') return;
+
+                                        $calc = ReservationMath::rateDepositFromRoom(
+                                            (int) ($get('room_id') ?? 0),
+                                            (float) ($state ?? 0),
+                                            (string) ($get('person') ?? '')
+                                        );
+
+                                        if (($get('room_id') ?? 0) > 0) {
+                                            $set('room_rate',     $calc['rate']);
+                                            $set('deposit_room',  $calc['deposit']);
+                                            $set('deposit_card',  $calc['deposit']);
+                                        }
+                                    })
                                     ->columnSpan(2),
 
                                 TextInput::make('extra_bed')

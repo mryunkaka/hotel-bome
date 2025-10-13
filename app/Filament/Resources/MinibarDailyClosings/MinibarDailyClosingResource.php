@@ -17,7 +17,7 @@ use App\Filament\Resources\MinibarDailyClosings\Tables\MinibarDailyClosingsTable
 
 class MinibarDailyClosingResource extends Resource
 {
-    use ForbidReceptionistResource;
+    // use ForbidReceptionistResource;
 
     protected static ?string $model = MinibarDailyClosing::class;
 
@@ -29,7 +29,7 @@ class MinibarDailyClosingResource extends Resource
 
     public static function getNavigationGroup(): string
     {
-        return 'Minibar';
+        return 'Back Office';
     }
 
     public static function form(Schema $schema): Schema

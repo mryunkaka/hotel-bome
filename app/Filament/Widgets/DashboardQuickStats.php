@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Schema;
 
 class DashboardQuickStats extends BaseWidget
 {
-    // ⛔ HAPUS "static"
     protected ?string $heading = 'Ringkasan';
 
     protected function getStats(): array
@@ -17,10 +16,16 @@ class DashboardQuickStats extends BaseWidget
         $hid = (int) (session('active_hotel_id') ?? 0);
 
         $count = function (string $table) use ($hid): int {
+            if (! Schema::hasTable($table)) {
+                return 0;
+            }
             try {
                 $q = DB::table($table);
                 if ($hid && Schema::hasColumn($table, 'hotel_id')) {
                     $q->where('hotel_id', $hid);
+                }
+                if (Schema::hasColumn($table, 'deleted_at')) {
+                    $q->whereNull('deleted_at');
                 }
                 return (int) $q->count();
             } catch (\Throwable) {
@@ -28,7 +33,6 @@ class DashboardQuickStats extends BaseWidget
             }
         };
 
-        // angka ke string "1.234"
         $nf = fn(int $n) => number_format($n, 0, ',', '.');
 
         return [
@@ -48,9 +52,9 @@ class DashboardQuickStats extends BaseWidget
                 ->icon('heroicon-o-banknotes')
                 ->color('warning'),
 
-            // ganti nama tabel sesuai punyamu jika beda
-            Stat::make('Jumlah AccountNo', $nf($count('account_nos')))
-                ->icon('heroicon-o-credit-card')
+            // gunakan ledger_accounts (ada di proyek kamu)
+            Stat::make('Ledger Accounts', $nf($count('ledger_accounts')))
+                ->icon('heroicon-o-rectangle-stack')
                 ->color('pink'),
         ];
     }

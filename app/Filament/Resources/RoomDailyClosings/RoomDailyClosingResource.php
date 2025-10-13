@@ -20,9 +20,14 @@ class RoomDailyClosingResource extends Resource
 {
     protected static ?string $model = RoomDailyClosing::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedCalendarDays;
 
     protected static ?string $recordTitleAttribute = 'room';
+
+    public static function getNavigationGroup(): string
+    {
+        return 'Back Office';
+    }
 
     public static function form(Schema $schema): Schema
     {

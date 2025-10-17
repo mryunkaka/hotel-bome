@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -12,7 +13,7 @@ class FacilityBooking extends Model
     protected $fillable = [
         'hotel_id',
         'facility_id',
-        'reservation_id',
+        'guest_id',
         'group_id',
         'start_at',
         'end_at',
@@ -30,6 +31,7 @@ class FacilityBooking extends Model
         'catering_total_amount',
         'status',
         'is_blocked',
+        'dp',
         'created_by',
         'updated_by',
     ];
@@ -47,7 +49,43 @@ class FacilityBooking extends Model
         'catering_total_amount' => 'decimal:2',
         'catering_total_pax' => 'int',
         'is_blocked' => 'bool',
+        'dp' => 'decimal:2',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $m) {
+            $m->created_by = $m->created_by ?: Auth::id();
+            $m->updated_by = $m->updated_by ?: Auth::id();
+
+            // include_catering auto dari nominal
+            $m->include_catering = (bool) ((float) $m->catering_total_amount > 0);
+
+            // is_blocked mengikuti status
+            if (in_array($m->status, [self::STATUS_CONFIRM, self::STATUS_PAID], true)) {
+                $m->is_blocked = true;
+            } elseif (in_array($m->status, [self::STATUS_COMPLETED, self::STATUS_CANCELLED], true)) {
+                $m->is_blocked = false;
+            }
+        });
+
+        static::updating(function (self $m) {
+            $m->updated_by = Auth::id();
+
+            // refresh include_catering saat update
+            $m->include_catering = (bool) ((float) $m->catering_total_amount > 0);
+
+            // jika status berubah, kunci/unlock block
+            if ($m->isDirty('status')) {
+                if (in_array($m->status, [self::STATUS_CONFIRM, self::STATUS_PAID], true)) {
+                    $m->is_blocked = true;
+                }
+                if (in_array($m->status, [self::STATUS_COMPLETED, self::STATUS_CANCELLED], true)) {
+                    $m->is_blocked = false;
+                }
+            }
+        });
+    }
 
     public const STATUS_DRAFT     = 'DRAFT';
     public const STATUS_CONFIRM   = 'CONFIRM';
@@ -70,9 +108,9 @@ class FacilityBooking extends Model
         return $this->belongsTo(Facility::class);
     }
 
-    public function reservation()
+    public function guest()
     {
-        return $this->belongsTo(Reservation::class);
+        return $this->belongsTo(Guest::class, 'guest_id');
     }
 
     public function group()

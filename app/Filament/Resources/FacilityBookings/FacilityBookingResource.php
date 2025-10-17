@@ -39,8 +39,8 @@ class FacilityBookingResource extends Resource
     public static function getRelations(): array
     {
         return [
-            CateringItemsRelationManager::class,
-            PaymentsRelationManager::class,
+            // CateringItemsRelationManager::class,
+            // PaymentsRelationManager::class,
         ];
     }
 

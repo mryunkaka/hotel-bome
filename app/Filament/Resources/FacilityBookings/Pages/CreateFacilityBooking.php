@@ -16,7 +16,18 @@ class CreateFacilityBooking extends CreateRecord
         $data['hotel_id'] = $data['hotel_id']
             ?? Session::get('active_hotel_id')
             ?? Auth::user()?->hotel_id;
+        $data['created_by'] = Auth::id();
+        $data['updated_by'] = Auth::id();
+        return $data;
+    }
 
+    protected function mutateFormDataBeforeSave(array $data): array
+    {
+        $data['updated_by'] = Auth::id();
+        // backfill created_by jika record lama null
+        if (empty($this->record->created_by ?? null)) {
+            $data['created_by'] = Auth::id();
+        }
         return $data;
     }
     protected function handleRecordCreation(array $data): \Illuminate\Database\Eloquent\Model

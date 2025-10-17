@@ -11,7 +11,6 @@ use Filament\Resources\Pages\ListRecords;
 use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class ListReservationGuests extends ListRecords
 {
@@ -28,12 +27,6 @@ class ListReservationGuests extends ListRecords
                 ->action(function () {
                     $user    = Auth::user();
                     $hotelId = (int) (session('active_hotel_id') ?? ($user->hotel_id ?? 1));
-
-                    Log::info('[Walkin Button@GuestCheckIn] CLICK', [
-                        'user_id'  => $user?->id,
-                        'hotel_id' => $hotelId,
-                        'today'    => now()->toDateString(),
-                    ]);
 
                     // 1) Lanjutkan draft walk-in (guest_id NULL) milik user & hotel ini
                     $existing = Reservation::query()
@@ -94,13 +87,6 @@ class ListReservationGuests extends ListRecords
                             'children'         => 0,
                             'expected_checkin' => $res->expected_arrival,
                             // deposit_room / deposit_card ada di tabel RG—biarkan 0 dulu
-                        ]);
-
-                        Log::info('[Walkin Button@GuestCheckIn] CREATED NEW', [
-                            'reservation_id' => $res->id,
-                            'reservation_no' => $res->reservation_no,
-                            'hotel_id'       => $hotelId,
-                            'created_by'     => $user?->id,
                         ]);
 
                         return $res;

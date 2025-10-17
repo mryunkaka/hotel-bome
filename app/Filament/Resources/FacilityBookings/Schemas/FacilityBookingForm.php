@@ -8,6 +8,7 @@ use App\Models\Facility;
 use App\Models\TaxSetting;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
+use App\Models\CateringPackage;
 use App\Models\FacilityBooking;
 use Illuminate\Support\Facades\Auth;
 use Filament\Forms\Components\Hidden;
@@ -29,13 +30,77 @@ final class FacilityBookingForm
             Section::make('Booking Info')
                 ->columns(2)
                 ->components([
+                    DateTimePicker::make('start_at')
+                        ->seconds(false)
+                        ->required()
+                        ->live(onBlur: true)
+                        ->afterStateUpdated(function (Get $get, Set $set) {
+                            self::normalizeDates($get, $set);
+                            self::autoQuantity($get, $set);
+                            self::ensureFacilityStillAvailable($get, $set); // ⬅️ cek ulang facility
+                        }),
+
+                    DateTimePicker::make('end_at')
+                        ->seconds(false)
+                        ->required()
+                        ->live(onBlur: true)
+                        ->afterStateUpdated(function (Get $get, Set $set) {
+                            self::normalizeDates($get, $set);
+                            self::autoQuantity($get, $set);
+                            self::ensureFacilityStillAvailable($get, $set); // ⬅️ cek ulang facility
+                        }),
+
+                    Hidden::make('record_id')
+                        ->dehydrated(false)
+                        ->afterStateHydrated(fn(Set $set, ?FacilityBooking $record) => $set('record_id', $record?->id)),
+
                     Select::make('facility_id')
                         ->label('Facility')
-                        ->relationship(name: 'facility', titleAttribute: 'name')
+                        ->placeholder('— pilih tanggal dulu —')
                         ->searchable()
                         ->preload()
                         ->required()
-                        ->live()
+                        ->reactive() // supaya re-render options saat start/end berubah
+                        ->disabled(fn(Get $g) => blank($g('start_at')) || blank($g('end_at')))
+                        ->helperText('Pilih tanggal mulai & selesai terlebih dahulu.')
+                        ->options(function (Get $get) {
+                            $hid   = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                            $start = $get('start_at');
+                            $end   = $get('end_at');
+                            $selfId = (int) ($get('record_id') ?? 0);
+
+                            if (blank($start) || blank($end)) {
+                                return []; // belum pilih tanggal → kosongkan daftar
+                            }
+
+                            $startAt = self::toCarbon($start)->format('Y-m-d H:i:s');
+                            $endAt   = self::toCarbon($end)->format('Y-m-d H:i:s');
+
+                            // Status yang dianggap memblokir (pesan/terpakai/terbooking)
+                            $blocking = [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID];
+
+                            $rows = Facility::query()
+                                ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+                                ->whereNotExists(function ($q) use ($startAt, $endAt, $blocking, $selfId) {
+                                    $q->from('facility_bookings as fb')
+                                        ->whereColumn('fb.facility_id', 'facilities.id')
+                                        ->whereNull('fb.deleted_at')
+                                        ->when($selfId > 0, fn($qq) => $qq->where('fb.id', '<>', $selfId))
+                                        ->where(function ($qq) use ($blocking) {
+                                            $qq->whereIn('fb.status', $blocking)
+                                                ->orWhere('fb.is_blocked', true);
+                                        })
+                                        // overlap rule: (start < End) AND (end > Start)
+                                        ->where('fb.start_at', '<', $endAt)
+                                        ->where('fb.end_at', '>', $startAt);
+                                })
+                                ->orderBy('name')
+                                ->limit(200)
+                                ->pluck('name', 'id');
+
+                            return $rows;
+                        })
+                        ->live() // biar afterStateUpdated jalan cepat saat pilih facility
                         ->afterStateUpdated(function ($state, Get $get, Set $set) {
                             if (!$state) return;
 
@@ -49,14 +114,11 @@ final class FacilityBookingForm
                             $set('hotel_id', $f->hotel_id);
                             $set('pricing_mode', $f->base_pricing_mode);
                             $set('pricing_mode_view', self::labelMode($f->base_pricing_mode));
-                            $set('unit_price', (string) $f->base_price);
+                            $set('unit_price', (float) $f->base_price); // ← simpan numeric
 
                             self::normalizeDates($get, $set);
                             self::autoQuantity($get, $set);
-
-                            // pasang tax default jika perlu
                             self::ensureDefaultTax($get, $set);
-
                             self::recalcTotals($get, $set);
                         }),
 
@@ -64,27 +126,318 @@ final class FacilityBookingForm
                         ->label('Event / Notes (short)')
                         ->maxLength(150),
 
-                    DateTimePicker::make('start_at')
-                        ->seconds(false)
-                        ->required()
-                        ->live(onBlur: true)
-                        ->afterStateUpdated(function (Get $get, Set $set) {
-                            self::normalizeDates($get, $set);
-                            self::autoQuantity($get, $set);
-                        }),
-
-                    DateTimePicker::make('end_at')
-                        ->seconds(false)
-                        ->required()
-                        ->live(onBlur: true)
-                        ->afterStateUpdated(function (Get $get, Set $set) {
-                            self::normalizeDates($get, $set);
-                            self::autoQuantity($get, $set);
-                        }),
-
                     Textarea::make('notes')
                         ->rows(2)
                         ->columnSpanFull(),
+                ]),
+
+            Section::make('Status & Audit')
+                ->columns(3)
+                ->components([
+                    Select::make('status')
+                        ->options([
+                            FacilityBooking::STATUS_DRAFT     => 'DRAFT',
+                            FacilityBooking::STATUS_CONFIRM   => 'CONFIRM',
+                            FacilityBooking::STATUS_PAID      => 'PAID',
+                            FacilityBooking::STATUS_COMPLETED => 'COMPLETED',
+                            FacilityBooking::STATUS_CANCELLED => 'CANCELLED',
+                        ])
+                        ->default(FacilityBooking::STATUS_DRAFT)
+                        ->required()
+                        ->live()
+                        ->afterStateHydrated(function ($state, Get $get, Set $set) {
+                            $set('is_blocked', in_array($state, [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID], true));
+                        })
+                        ->afterStateUpdated(function ($state, Get $get, Set $set) {
+                            $set('is_blocked', in_array($state, [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID], true));
+                        }),
+
+                    Toggle::make('is_blocked')
+                        ->label('Schedule Blocked')
+                        ->disabled()
+                        ->default(false),
+
+                    // ===== Reserved By (Guest / Group) - tanpa nested Section =====
+                    \Filament\Forms\Components\Radio::make('reserved_by_type')
+                        ->label('Reserved By Type')
+                        ->options(['GUEST' => 'Guest', 'GROUP' => 'Group'])
+                        ->default(null)
+                        ->live()
+                        ->dehydrated(false)
+                        ->afterStateHydrated(function (Get $get, Set $set, ?\App\Models\FacilityBooking $record) {
+                            // Saat EDIT: ambil dari record
+                            if ($record && $record->exists) {
+                                $set('reserved_by_type', $record->group_id ? 'GROUP' : 'GUEST');
+                                return;
+                            }
+                            // Saat CREATE atau fallback: infer dari state sementara
+                            $set('reserved_by_type', $get('group_id') ? 'GROUP' : 'GUEST');
+                        })
+                        ->afterStateUpdated(function ($state, Get $get, Set $set) {
+                            if ($state === 'GUEST') {
+                                $set('group_id', null);
+                            } else {
+                                $set('guest_id', null);
+                            }
+                        })
+                        ->columnSpan(3), // full width pada Section 3 kolom
+
+                    // --- GUEST ---
+                    Select::make('guest_id')
+                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
+                        ->visible(fn(Get $get) => $get('reserved_by_type') === 'GUEST')
+                        ->label('Guest')
+                        ->placeholder('— pilih / tambah tamu —')
+                        ->native(false)
+                        ->searchable()
+                        ->preload()
+                        ->options(function (Get $get) {
+                            $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+                            // id guest yang sedang terpilih
+                            $currentGuestId = (int) ($get('guest_id') ?? 0);
+
+                            // kumpulkan id dari repeater jika ada
+                            $idsFromState = $get('reservationGuests.*.guest_id') ?? [];
+                            if (empty($idsFromState)) {
+                                $idsFromState = \Illuminate\Support\Arr::flatten(
+                                    (array) \Illuminate\Support\Arr::get(request()->input(), 'data.reservationGuests.*.guest_id', [])
+                                );
+                            }
+                            $selectedGuestIds = array_filter(
+                                array_map('intval', $idsFromState),
+                                fn($id) => $id > 0 && $id !== $currentGuestId
+                            );
+
+                            $rows = \App\Models\Guest::query()
+                                ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId) {
+                                    $q->where('hotel_id', $hid)
+                                        ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds))
+                                        ->whereNotExists(function ($sub) use ($hid) {
+                                            $sub->from('reservation_guests as rg')
+                                                ->whereColumn('rg.guest_id', 'guests.id')
+                                                ->where('rg.hotel_id', $hid)
+                                                ->whereNull('rg.actual_checkout'); // exclude yang belum checkout
+                                        });
+
+                                    // sertakan current saat edit
+                                    if ($currentGuestId > 0) {
+                                        $q->orWhere('id', $currentGuestId);
+                                    }
+                                })
+                                ->orderBy('name')
+                                ->limit(200)
+                                ->get(['id', 'name', 'id_card']);
+
+                            return $rows->mapWithKeys(function ($g) {
+                                $idCard = trim((string) ($g->id_card ?? ''));
+                                $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                return [$g->id => $label];
+                            })->toArray();
+                        })
+                        ->getSearchResultsUsing(function (string $search, Get $get) {
+                            $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
+                            $currentGuestId = (int) ($get('guest_id') ?? 0);
+                            $idsFromState   = $get('reservationGuests.*.guest_id') ?? [];
+                            if (empty($idsFromState)) {
+                                $idsFromState = \Illuminate\Support\Arr::flatten(
+                                    (array) \Illuminate\Support\Arr::get(request()->input(), 'data.reservationGuests.*.guest_id', [])
+                                );
+                            }
+                            $selectedGuestIds = array_filter(
+                                array_map('intval', $idsFromState),
+                                fn($id) => $id > 0 && $id !== $currentGuestId
+                            );
+
+                            $s = trim(preg_replace('/\s+/', ' ', $search));
+
+                            $rows = \App\Models\Guest::query()
+                                ->where(function ($q) use ($hid, $selectedGuestIds, $currentGuestId, $s) {
+                                    $q->where('hotel_id', $hid)
+                                        ->when(!empty($selectedGuestIds), fn($qq) => $qq->whereNotIn('id', $selectedGuestIds))
+                                        ->where(function ($qq) use ($s) {
+                                            $qq->where('name', 'like', "%{$s}%")
+                                                ->orWhere('phone', 'like', "%{$s}%")
+                                                ->orWhere('id_card', 'like', "%{$s}%");
+                                        })
+                                        ->whereNotExists(function ($sub) use ($hid) {
+                                            $sub->from('reservation_guests as rg')
+                                                ->whereColumn('rg.guest_id', 'guests.id')
+                                                ->where('rg.hotel_id', $hid)
+                                                ->whereNull('rg.actual_checkout');
+                                        });
+
+                                    if ($currentGuestId > 0) {
+                                        $q->orWhere('id', $currentGuestId);
+                                    }
+                                })
+                                ->orderBy('name')
+                                ->limit(50)
+                                ->get(['id', 'name', 'id_card']);
+
+                            return $rows->mapWithKeys(function ($g) {
+                                $idCard = trim((string) ($g->id_card ?? ''));
+                                $label  = $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                                return [$g->id => $label];
+                            })->toArray();
+                        })
+                        ->getOptionLabelUsing(function ($value): ?string {
+                            if (!$value) return null;
+                            $g = \App\Models\Guest::query()->select('name', 'id_card')->find($value);
+                            if (!$g) return null;
+                            $idCard = trim((string) ($g->id_card ?? ''));
+                            return $g->name . ($idCard !== '' && $idCard !== '-' ? " ({$idCard})" : '');
+                        })
+                        ->createOptionForm([
+                            \Filament\Forms\Components\TextInput::make('name')->label('Name')->required()->maxLength(150),
+                            \Filament\Forms\Components\TextInput::make('phone')->label('Phone No')->maxLength(50),
+                            \Filament\Forms\Components\TextInput::make('email')->label('Email')->email()->maxLength(150),
+                            \Filament\Forms\Components\Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
+                        ])
+                        ->createOptionUsing(fn(array $data) => \App\Models\Guest::create($data)->id)
+                        ->columnSpan(3),
+
+                    // --- GROUP ---
+                    Select::make('group_id')
+                        ->required(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
+                        ->visible(fn(Get $get) => $get('reserved_by_type') === 'GROUP')
+                        ->label('Group')
+                        ->placeholder('— pilih / tambah group —')
+                        ->native(false)
+                        ->searchable()
+                        ->preload()
+                        ->options(function () {
+                            $hotelId = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                            $groups = \App\Models\ReservationGroup::query()
+                                ->when($hotelId, fn($q) => $q->where('hotel_id', $hotelId))
+                                ->orderBy('name')
+                                ->limit(200)
+                                ->get(['id', 'name', 'city']);
+
+                            return $groups->mapWithKeys(function ($g) {
+                                $city = $g->city ? " ({$g->city})" : '';
+                                return [$g->id => $g->name . $city];
+                            })->toArray();
+                        })
+                        ->createOptionForm([
+                            \Filament\Forms\Components\TextInput::make('name')->label('Group Name')->required(),
+                            \Filament\Forms\Components\TextInput::make('address')->label('Address'),
+                            \Filament\Forms\Components\TextInput::make('city')->label('City'),
+                            \Filament\Forms\Components\TextInput::make('phone')->label('Phone'),
+                            \Filament\Forms\Components\TextInput::make('email')->label('Email')->email(),
+                            \Filament\Forms\Components\Hidden::make('hotel_id')->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id),
+                        ])
+                        ->createOptionUsing(fn(array $data) => \App\Models\ReservationGroup::create($data)->id)
+                        ->columnSpan(3),
+
+                    // ===== Hidden fields tetap =====
+                    Hidden::make('hotel_id')
+                        ->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id)
+                        ->dehydrated(true)
+                        ->required()
+                        ->afterStateHydrated(function ($state, Set $set) {
+                            if (empty($state)) {
+                                $set('hotel_id', Session::get('active_hotel_id') ?? Auth::user()?->hotel_id);
+                            }
+                        }),
+
+                    Hidden::make('include_catering')
+                        ->default(false)
+                        ->dehydrated(true)
+                        ->afterStateHydrated(function (Get $get, Set $set) {
+                            $set('include_catering', (float) ($get('catering_total_amount') ?? 0) > 0);
+                        }),
+                    Hidden::make('created_by')
+                        ->dehydrated(true)
+                        ->afterStateHydrated(function (Get $get, Set $set, ?\App\Models\FacilityBooking $record) {
+                            if ($record && $record->exists) {
+                                // Backfill kalau dulu sempat null
+                                $set('created_by', $record->created_by ?: Auth::id());
+                            } else {
+                                // Create baru → set ke user saat ini
+                                $set('created_by', Auth::id());
+                            }
+                        }),
+                ]),
+
+            Section::make('Catering')
+                ->columns(2)
+                ->components([
+                    Select::make('catering_package_id')
+                        ->label('Package')
+                        ->placeholder('Select')
+                        ->searchable()
+                        ->preload()
+                        ->options(function (Get $get) {
+                            $hid  = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+                            $curr = $get('catering_package_id');
+
+                            return CateringPackage::query()
+                                ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+                                ->where(function ($q) use ($curr) {
+                                    $q->where('is_active', true);
+                                    if ($curr) $q->orWhere('id', $curr); // tetap tampilkan value saat ini walau non-aktif
+                                })
+                                ->orderBy('name')
+                                ->limit(200)
+                                ->pluck('name', 'id');
+                        })
+                        // Gunakan live immediate (bukan onBlur) biar state pax ter-update cepat, kecilkan noise dgn debounce
+                        ->live(debounce: 300)
+                        ->getOptionLabelUsing(fn($value) => $value ? CateringPackage::query()->whereKey($value)->value('name') : null)
+                        ->afterStateUpdated(function ($id, Get $get, Set $set) {
+                            // Jangan timpa pax manual di sini — serahkan ke helper
+                            self::refreshCatering($get, $set);
+                            self::recalcTotals($get, $set);
+                        }),
+
+                    TextInput::make('catering_pax')
+                        ->label('Jumlah Orang')
+                        ->numeric()
+                        ->minValue(1)
+                        ->step(1)
+                        // Live immediate biar tidak kalah cepat oleh event lain
+                        ->live(debounce: 300)
+                        ->afterStateHydrated(function (Get $get, Set $set, ?FacilityBooking $record) {
+                            // Saat edit pertama kali: jika state null/0, isi dari DB (catering_total_pax)
+                            $curr = $get('catering_pax');
+                            if ($curr === null || (int) $curr === 0) {
+                                $set('catering_pax', (int) ($get('catering_total_pax') ?? 0));
+                            }
+
+                            // Sinkron tampilan total di awal render
+                            $raw = (float) ($get('catering_total_amount') ?? 0);
+                            $set('catering_total_amount_view', number_format($raw, 0, ',', '.'));
+                        })
+                        ->afterStateUpdated(function ($pax, Get $get, Set $set) {
+                            // Perubahan pax → hitung ulang
+                            self::refreshCatering($get, $set);
+                            self::recalcTotals($get, $set);
+                        })
+                        ->helperText('Jika paket punya min pax, nilai otomatis dinaikkan jika kurang dari minimum paket.'),
+
+                    // HANYA TAMPILAN → tidak dikirim ke DB
+                    TextInput::make('catering_unit_price')
+                        ->label('Harga')
+                        ->readOnly()
+                        ->dehydrated(false)
+                        ->formatStateUsing(fn(Get $get) => number_format((float) ($get('catering_unit_price') ?? 0), 0, ',', '.')),
+
+                    // HANYA TAMPILAN total → tidak dikirim ke DB
+                    TextInput::make('catering_total_amount_view')
+                        ->label('Total Harga Catering')
+                        ->readOnly()
+                        ->reactive()
+                        ->dehydrated(false)
+                        ->afterStateHydrated(function (Get $get, Set $set) {
+                            $raw = (float) ($get('catering_total_amount') ?? 0);
+                            $set('catering_total_amount_view', number_format($raw, 0, ',', '.'));
+                        }),
+
+                    // NILAI MENTAH → dikirim ke DB
+                    Hidden::make('catering_total_amount')->dehydrated(true),
+                    Hidden::make('catering_total_pax')->dehydrated(true),
                 ]),
 
             Section::make('Pricing')
@@ -106,7 +459,7 @@ final class FacilityBookingForm
 
                     // Ikut facility & terkunci
                     TextInput::make('unit_price')
-                        ->numeric()->prefix('Rp')->required()
+                        ->numeric()->required()
                         ->disabled()->dehydrated(true),
 
                     // Qty auto dari durasi (read-only)
@@ -115,15 +468,21 @@ final class FacilityBookingForm
                         ->helperText('Auto by duration (hours/days)')
                         ->disabled()->dehydrated(true),
 
-                    // ===== DISCOUNT: PERSEN SAJA =====
                     TextInput::make('discount_percent')
                         ->label('Discount (%)')
                         ->numeric()->minValue(0)->maxValue(100)
-                        ->default(0)
                         ->helperText('Persentase dari base (unit_price × quantity)')
                         ->live(onBlur: true)
                         ->afterStateUpdated(fn(Get $g, Set $s) => self::recalcTotals($g, $s))
-                        ->dehydrated(false),
+                        ->afterStateHydrated(function (Get $g, Set $s) {
+                            // Kalau percent tidak tersimpan historis, derive dari discount_amount & base
+                            if ($g('discount_percent') === null) {
+                                $base = (float) ($g('unit_price') ?? 0) * (float) ($g('quantity') ?? 0);
+                                $disc = (float) ($g('discount_amount') ?? 0);
+                                $s('discount_percent', $base > 0 ? round(($disc / $base) * 100, 2) : 0);
+                            }
+                        })
+                        ->dehydrated(true),
 
                     // discount nominal tidak ditampilkan, tapi tetap disimpan ke DB
                     Hidden::make('discount_amount')->dehydrated(true),
@@ -144,7 +503,7 @@ final class FacilityBookingForm
                                 ->limit(200)
                                 ->pluck('name', 'id');
                         })
-                        ->live()
+                        ->live(onBlur: true)
                         ->afterStateHydrated(function ($state, Get $get, Set $set) {
                             self::ensureDefaultTax($get, $set);
                             self::recalcTotals($get, $set);
@@ -156,60 +515,60 @@ final class FacilityBookingForm
                         })
                         ->dehydrated(false),
 
-                    Hidden::make('tax_percent')->dehydrated(false),
+                    Hidden::make('tax_percent')->dehydrated(true),
 
                     // ringkasan catering (read-only; tidak disimpan)
-                    TextInput::make('catering_total_amount_view')
-                        ->label('Catering Amount (summary)')
-                        ->readOnly()->dehydrated(false)
-                        ->formatStateUsing(fn(Get $get) => 'Rp ' . number_format((float) ($get('catering_total_amount') ?? 0), 0, ',', '.')),
+                    TextInput::make('dp')
+                        ->label('DP (50% dari Total)')
+                        ->readOnly()
+                        ->dehydrated(true),
 
                     // tax amount auto (read-only, tersimpan)
                     TextInput::make('tax_amount')
-                        ->numeric()->prefix('Rp')
+                        ->numeric()
                         ->readOnly()->dehydrated(true),
 
                     TextInput::make('subtotal_amount')
-                        ->numeric()->prefix('Rp')
+                        ->numeric()
                         ->readOnly()->dehydrated(true),
 
                     TextInput::make('total_amount')
-                        ->numeric()->prefix('Rp')
+                        ->numeric()
                         ->readOnly()->dehydrated(true),
                 ]),
-
-            Section::make('Status & Audit')
-                ->columns(3)
-                ->components([
-                    Select::make('status')
-                        ->options([
-                            FacilityBooking::STATUS_DRAFT     => 'DRAFT',
-                            FacilityBooking::STATUS_CONFIRM   => 'CONFIRM',
-                            FacilityBooking::STATUS_PAID      => 'PAID',
-                            FacilityBooking::STATUS_COMPLETED => 'COMPLETED',
-                            FacilityBooking::STATUS_CANCELLED => 'CANCELLED',
-                        ])
-                        ->default(FacilityBooking::STATUS_DRAFT)
-                        ->required(),
-
-                    Toggle::make('is_blocked')
-                        ->label('Schedule Blocked')
-                        ->disabled()
-                        ->default(false),
-
-                    Hidden::make('hotel_id')
-                        ->default(fn() => Session::get('active_hotel_id') ?? Auth::user()?->hotel_id)
-                        ->dehydrated(true)
-                        ->required()
-                        ->afterStateHydrated(function ($state, Set $set) {
-                            if (empty($state)) {
-                                $set('hotel_id', Session::get('active_hotel_id') ?? Auth::user()?->hotel_id);
-                            }
-                        }),
-                    Hidden::make('catering_total_amount')->default(0)->dehydrated(true),
-                    Hidden::make('catering_total_pax')->default(0)->dehydrated(true),
-                ]),
         ]);
+    }
+
+    /** Hitung dan set ulang nilai catering (unit_price, pax, total, include) */
+    private static function refreshCatering(Get $get, Set $set): void
+    {
+        $id   = $get('catering_package_id');
+        $pax  = (int) ($get('catering_pax') ?? 0);
+
+        if (!$id) {
+            $set('catering_unit_price', 0);
+            // pax dibiarkan apa adanya (jangan di-nolkan)
+            $set('catering_total_pax', max(0, $pax));
+            $set('catering_total_amount', 0);
+            $set('catering_total_amount_view', '0');
+            $set('include_catering', false);
+            return;
+        }
+
+        $min   = (int) (CateringPackage::query()->whereKey($id)->value('min_pax') ?? 1);
+        $price = (float) (CateringPackage::query()->whereKey($id)->value('price_per_pax') ?? 0);
+
+        // pax kosong/<=0 → pakai min. Jika user sudah isi, hormati dan hanya naikan ke min jika kurang.
+        $pax   = ($pax <= 0) ? $min : max($pax, $min);
+
+        $total = $pax * $price;
+
+        $set('catering_unit_price', $price);
+        $set('catering_pax', $pax);
+        $set('catering_total_pax', $pax);
+        $set('catering_total_amount', $total);
+        $set('catering_total_amount_view', number_format($total, 0, ',', '.'));
+        $set('include_catering', $total > 0);
     }
 
     /** Jika end kosong / <= start, set end minimal +1 jam/hari sesuai mode. */
@@ -286,6 +645,8 @@ final class FacilityBookingForm
         $set('subtotal_amount', $subtotal);
         $set('tax_amount', $tax);
         $set('total_amount', $total);
+        $set('dp', round($total * 0.5, 2));
+        $set('include_catering', $cat > 0);
     }
 
     /** Parser aman untuk format html-datetime-local / ISO. */
@@ -334,6 +695,52 @@ final class FacilityBookingForm
             $set('tax_percent', (float) $row->percent);
         } else {
             $set('tax_percent', 0);
+        }
+    }
+    /** True jika facility available (tidak ada overlap blocking pada rentang) */
+    private static function isFacilityAvailable(int $facilityId, Carbon $start, Carbon $end, ?int $ignoreId = null): bool
+    {
+        $blocking = [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID];
+
+        $conflictCount = FacilityBooking::query()
+            ->where('facility_id', $facilityId)
+            ->whereNull('deleted_at')
+            ->when($ignoreId, fn($q) => $q->where('id', '<>', $ignoreId))
+            ->where(function ($q) use ($blocking) {
+                $q->whereIn('status', $blocking)
+                    ->orWhere('is_blocked', true);
+            })
+            ->where('start_at', '<', $end->format('Y-m-d H:i:s'))
+            ->where('end_at',   '>', $start->format('Y-m-d H:i:s'))
+            ->count();
+
+        return $conflictCount === 0;
+    }
+
+    /** Jika facility terpilih tapi tidak lagi available setelah tanggal diubah → kosongkan */
+    private static function ensureFacilityStillAvailable(Get $get, Set $set): void
+    {
+        $facilityId = (int) ($get('facility_id') ?? 0);
+        if ($facilityId <= 0) return;
+
+        $s = $get('start_at');
+        $e = $get('end_at');
+        if (blank($s) || blank($e)) return;
+
+        $start = self::toCarbon($s);
+        $end   = self::toCarbon($e);
+        if ($end->lessThanOrEqualTo($start)) return;
+
+        $ignoreId = (int) ($get('record_id') ?? 0);
+
+        if (! self::isFacilityAvailable($facilityId, $start, $end, $ignoreId)) {
+            // kosongkan pilihan + reset harga/qty agar jelas ke user
+            $set('facility_id', null);
+            $set('unit_price', 0);
+            $set('quantity', 0);
+            $set('pricing_mode', FacilityBooking::PRICING_PER_HOUR);
+            $set('pricing_mode_view', self::labelMode(FacilityBooking::PRICING_PER_HOUR));
+            self::recalcTotals($get, $set);
         }
     }
 }

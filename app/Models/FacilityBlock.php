@@ -66,4 +66,13 @@ class FacilityBlock extends Model
             ->where('start_at', '<', $end)
             ->where('end_at', '>', $start);
     }
+
+    public static function closeActiveFor(int $facilityId, \DateTimeInterface|string $when): int
+    {
+        return static::query()
+            ->where('facility_id', $facilityId)
+            ->where('start_at', '<', $when)
+            ->where('end_at', '>', $when)
+            ->update(['end_at' => $when, 'active' => false]);
+    }
 }

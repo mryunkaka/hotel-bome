@@ -29,16 +29,15 @@ class FacilityResource extends Resource
     protected static ?string $recordTitleAttribute = 'Facilities';
     protected static ?int $navigationSort = 10;
 
-
-    public static function getModelLabel(): string
+    public static function getNavigationGroup(): string
     {
         return 'Facility';
     }
+
     public static function getPluralModelLabel(): string
     {
         return 'Facilities';
     }
-
 
     public static function form(Schema $schema): Schema
     {
@@ -58,7 +57,6 @@ class FacilityResource extends Resource
             // FacilityBookingsRelationManager::class,
         ];
     }
-
 
     public static function getPages(): array
     {

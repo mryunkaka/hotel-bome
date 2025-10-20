@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Models\Payment;
 use App\Observers\PaymentObserver;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Log;
 
 class AppServiceProvider extends ServiceProvider
 {

@@ -245,7 +245,6 @@ document.addEventListener('alpine:init', () => {
         save() {
             this.recalc();
             alert('Form data prepared for saving!');
-            console.log({ formData: this.form, calculations: this.sum });
         },
         init() {
             this.syncDeparture();

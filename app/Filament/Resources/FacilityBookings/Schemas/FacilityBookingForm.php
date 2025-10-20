@@ -76,11 +76,13 @@ final class FacilityBookingForm
                             $startAt = self::toCarbon($start)->format('Y-m-d H:i:s');
                             $endAt   = self::toCarbon($end)->format('Y-m-d H:i:s');
 
-                            // Status yang dianggap memblokir (pesan/terpakai/terbooking)
+                            // Status booking yang dianggap memblokir (terpakai / terbooking)
                             $blocking = [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID];
 
+                            // Ambil semua facility yang TIDAK ada booking aktif & TIDAK sedang diblok
                             $rows = Facility::query()
                                 ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+                                // tidak ada booking aktif yang overlap
                                 ->whereNotExists(function ($q) use ($startAt, $endAt, $blocking, $selfId) {
                                     $q->from('facility_bookings as fb')
                                         ->whereColumn('fb.facility_id', 'facilities.id')
@@ -93,6 +95,14 @@ final class FacilityBookingForm
                                         // overlap rule: (start < End) AND (end > Start)
                                         ->where('fb.start_at', '<', $endAt)
                                         ->where('fb.end_at', '>', $startAt);
+                                })
+                                // tidak sedang diblok (FacilityBlock aktif)
+                                ->whereNotExists(function ($q) use ($startAt, $endAt) {
+                                    $q->from('facility_blocks as fb2')
+                                        ->whereColumn('fb2.facility_id', 'facilities.id')
+                                        ->where('fb2.start_at', '<', $endAt)
+                                        ->where('fb2.end_at', '>', $startAt)
+                                        ->where('fb2.active', true);
                                 })
                                 ->orderBy('name')
                                 ->limit(200)
@@ -118,7 +128,7 @@ final class FacilityBookingForm
 
                             self::normalizeDates($get, $set);
                             self::autoQuantity($get, $set);
-                            self::ensureDefaultTax($get, $set);
+                            // self::ensureDefaultTax($get, $set);
                             self::recalcTotals($get, $set);
                         }),
 
@@ -342,12 +352,17 @@ final class FacilityBookingForm
                             }
                         }),
 
+                    // Di section Status & Audit (atau mana saja)
                     Hidden::make('include_catering')
                         ->default(false)
                         ->dehydrated(true)
                         ->afterStateHydrated(function (Get $get, Set $set) {
+                            // kalau belum pernah di-set, nolkan supaya konsisten
+                            if ($get('catering_total_amount') === null) $set('catering_total_amount', 0);
+                            if ($get('catering_total_pax') === null)    $set('catering_total_pax', 0);
                             $set('include_catering', (float) ($get('catering_total_amount') ?? 0) > 0);
                         }),
+
                     Hidden::make('created_by')
                         ->dehydrated(true)
                         ->afterStateHydrated(function (Get $get, Set $set, ?\App\Models\FacilityBooking $record) {
@@ -377,17 +392,15 @@ final class FacilityBookingForm
                                 ->when($hid, fn($q) => $q->where('hotel_id', $hid))
                                 ->where(function ($q) use ($curr) {
                                     $q->where('is_active', true);
-                                    if ($curr) $q->orWhere('id', $curr); // tetap tampilkan value saat ini walau non-aktif
+                                    if ($curr) $q->orWhere('id', $curr);
                                 })
                                 ->orderBy('name')
                                 ->limit(200)
                                 ->pluck('name', 'id');
                         })
-                        // Gunakan live immediate (bukan onBlur) biar state pax ter-update cepat, kecilkan noise dgn debounce
                         ->live(debounce: 300)
                         ->getOptionLabelUsing(fn($value) => $value ? CateringPackage::query()->whereKey($value)->value('name') : null)
                         ->afterStateUpdated(function ($id, Get $get, Set $set) {
-                            // Jangan timpa pax manual di sini — serahkan ke helper
                             self::refreshCatering($get, $set);
                             self::recalcTotals($get, $set);
                         }),
@@ -395,36 +408,43 @@ final class FacilityBookingForm
                     TextInput::make('catering_pax')
                         ->label('Jumlah Orang')
                         ->numeric()
-                        ->minValue(1)
+                        ->nullable()               // ← boleh kosong
                         ->step(1)
-                        // Live immediate biar tidak kalah cepat oleh event lain
                         ->live(debounce: 300)
+                        // Jangan pasang ->minValue(1) agar browser tidak memaksa
+                        // Validasi kondisional (server-side) saja:
+                        ->rule(function (Get $get) {
+                            return $get('catering_package_id')
+                                ? ['nullable', 'integer', 'min:1']
+                                : ['nullable', 'integer', 'min:0'];
+                        })
+                        // Atribut HTML 'min' ikut kondisional (hilangkan tooltip kuning)
+                        ->extraInputAttributes(function (Get $get) {
+                            return $get('catering_package_id') ? ['min' => 1] : ['min' => 0];
+                        })
                         ->afterStateHydrated(function (Get $get, Set $set, ?FacilityBooking $record) {
-                            // Saat edit pertama kali: jika state null/0, isi dari DB (catering_total_pax)
                             $curr = $get('catering_pax');
                             if ($curr === null || (int) $curr === 0) {
                                 $set('catering_pax', (int) ($get('catering_total_pax') ?? 0));
                             }
 
-                            // Sinkron tampilan total di awal render
                             $raw = (float) ($get('catering_total_amount') ?? 0);
                             $set('catering_total_amount_view', number_format($raw, 0, ',', '.'));
                         })
                         ->afterStateUpdated(function ($pax, Get $get, Set $set) {
-                            // Perubahan pax → hitung ulang
                             self::refreshCatering($get, $set);
                             self::recalcTotals($get, $set);
                         })
-                        ->helperText('Jika paket punya min pax, nilai otomatis dinaikkan jika kurang dari minimum paket.'),
+                        ->helperText('Opsional. Jika memilih paket, jumlah otomatis dinaikkan ke minimum paket.'),
 
-                    // HANYA TAMPILAN → tidak dikirim ke DB
+                    // HANYA TAMPILAN
                     TextInput::make('catering_unit_price')
                         ->label('Harga')
                         ->readOnly()
                         ->dehydrated(false)
+                        ->reactive()   // ⬅️ opsional tapi bagus
                         ->formatStateUsing(fn(Get $get) => number_format((float) ($get('catering_unit_price') ?? 0), 0, ',', '.')),
 
-                    // HANYA TAMPILAN total → tidak dikirim ke DB
                     TextInput::make('catering_total_amount_view')
                         ->label('Total Harga Catering')
                         ->readOnly()
@@ -435,9 +455,19 @@ final class FacilityBookingForm
                             $set('catering_total_amount_view', number_format($raw, 0, ',', '.'));
                         }),
 
-                    // NILAI MENTAH → dikirim ke DB
-                    Hidden::make('catering_total_amount')->dehydrated(true),
-                    Hidden::make('catering_total_pax')->dehydrated(true),
+                    Hidden::make('catering_total_amount')
+                        ->default(0)
+                        ->dehydrated(true)
+                        // pastikan yang dikirim selalu numeric 0 jika null
+                        ->dehydrateStateUsing(fn($state) => (float) ($state ?? 0))
+                        // sinkronkan state di UI agar tidak null
+                        ->afterStateHydrated(fn($state, Set $set) => $set('catering_total_amount', (float) ($state ?? 0))),
+
+                    Hidden::make('catering_total_pax')
+                        ->default(0)
+                        ->dehydrated(true)
+                        ->dehydrateStateUsing(fn($state) => (int) ($state ?? 0))
+                        ->afterStateHydrated(fn($state, Set $set) => $set('catering_total_pax', (int) ($state ?? 0))),
                 ]),
 
             Section::make('Pricing')
@@ -457,25 +487,26 @@ final class FacilityBookingForm
                     // Nilai sebenarnya disimpan
                     Hidden::make('pricing_mode')->dehydrated(true),
 
-                    // Ikut facility & terkunci
                     TextInput::make('unit_price')
                         ->numeric()->required()
-                        ->disabled()->dehydrated(true),
+                        ->disabled()->dehydrated(true)
+                        ->reactive(),
 
                     // Qty auto dari durasi (read-only)
                     TextInput::make('quantity')
                         ->numeric()->minValue(0.5)->step('0.5')->required()
                         ->helperText('Auto by duration (hours/days)')
-                        ->disabled()->dehydrated(true),
+                        ->disabled()->dehydrated(true)
+                        ->reactive(),
 
                     TextInput::make('discount_percent')
                         ->label('Discount (%)')
                         ->numeric()->minValue(0)->maxValue(100)
                         ->helperText('Persentase dari base (unit_price × quantity)')
-                        ->live(onBlur: true)
+                        ->live(debounce: 300)             // ⬅️ dulu onBlur, ganti agar realtime
+                        ->reactive()                      // ⬅️ pastikan rerender
                         ->afterStateUpdated(fn(Get $g, Set $s) => self::recalcTotals($g, $s))
                         ->afterStateHydrated(function (Get $g, Set $s) {
-                            // Kalau percent tidak tersimpan historis, derive dari discount_amount & base
                             if ($g('discount_percent') === null) {
                                 $base = (float) ($g('unit_price') ?? 0) * (float) ($g('quantity') ?? 0);
                                 $disc = (float) ($g('discount_amount') ?? 0);
@@ -487,15 +518,18 @@ final class FacilityBookingForm
                     // discount nominal tidak ditampilkan, tapi tetap disimpan ke DB
                     Hidden::make('discount_amount')->dehydrated(true),
 
-                    // ===== TAX dari TaxSetting (otomatis default & hitung amount) =====
                     Select::make('id_tax')
                         ->label('Tax')
-                        ->placeholder('Select')
-                        ->native(true)
+                        ->placeholder('Select')      // tampil "Select" dulu
+                        ->native(false)              // biar placeholder pasti muncul
+                        ->searchable()
                         ->nullable()
+                        ->preload()
+                        ->reactive()
+                        ->default(null)              // paksa default null
                         ->options(function () {
-                            $hid = Session::get('active_hotel_id')
-                                ?? Auth::user()?->hotel_id;
+                            $hid = Session::get('active_hotel_id') ?? Auth::user()?->hotel_id;
+
                             return TaxSetting::query()
                                 ->where('hotel_id', $hid)
                                 ->orderBy('is_active', 'desc')
@@ -503,11 +537,18 @@ final class FacilityBookingForm
                                 ->limit(200)
                                 ->pluck('name', 'id');
                         })
-                        ->live(onBlur: true)
-                        ->afterStateHydrated(function ($state, Get $get, Set $set) {
-                            self::ensureDefaultTax($get, $set);
+                        // ⬇️ Pada halaman CREATE pastikan tetap null + tax_percent=0
+                        ->afterStateHydrated(function ($state, Get $get, Set $set, ?\App\Models\FacilityBooking $record) {
+                            if (! $record || ! $record->exists) {       // create page
+                                if (blank($state)) {
+                                    $set('id_tax', null);
+                                    $set('tax_percent', 0);
+                                }
+                            }
+                            // hitung ulang ringkasan
                             self::recalcTotals($get, $set);
                         })
+                        // jika user memilih tax → isi persen, kalau di-clear → 0
                         ->afterStateUpdated(function ($id, Get $get, Set $set) {
                             $percent = $id ? (float) (TaxSetting::query()->whereKey($id)->value('percent') ?? 0) : 0.0;
                             $set('tax_percent', $percent);
@@ -515,26 +556,31 @@ final class FacilityBookingForm
                         })
                         ->dehydrated(false),
 
-                    Hidden::make('tax_percent')->dehydrated(true),
+                    Hidden::make('tax_percent')
+                        ->default(0)
+                        ->dehydrated(true)
+                        ->afterStateHydrated(fn($state, Set $set) => $state === null ? $set('tax_percent', 0) : null),
 
-                    // ringkasan catering (read-only; tidak disimpan)
                     TextInput::make('dp')
                         ->label('DP (50% dari Total)')
                         ->readOnly()
-                        ->dehydrated(true),
+                        ->dehydrated(true)
+                        ->reactive(),
 
-                    // tax amount auto (read-only, tersimpan)
                     TextInput::make('tax_amount')
                         ->numeric()
-                        ->readOnly()->dehydrated(true),
+                        ->readOnly()->dehydrated(true)
+                        ->reactive(),
 
                     TextInput::make('subtotal_amount')
                         ->numeric()
-                        ->readOnly()->dehydrated(true),
+                        ->readOnly()->dehydrated(true)
+                        ->reactive(),
 
                     TextInput::make('total_amount')
                         ->numeric()
-                        ->readOnly()->dehydrated(true),
+                        ->readOnly()->dehydrated(true)
+                        ->reactive(),
                 ]),
         ]);
     }

@@ -8,21 +8,95 @@ use App\Models\Hotel;
 use App\Models\Booking;
 use App\Models\Invoice;
 use App\Models\Payment;
+use App\Models\Facility;
 use App\Models\BankLedger;
 use App\Models\IncomeItem;
 use App\Models\Reservation;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Models\AccountLedger;
+use App\Models\FacilityBlock;
 use App\Models\MinibarReceipt;
 use Illuminate\Support\Carbon;
+use App\Models\FacilityBooking;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Validation\Rule;
 use App\Models\ReservationGuest;
 use App\Support\ReservationMath;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 
 Route::redirect('/', '/admin');
+
+Route::patch('/admin/facilities/{facility}/quick-status', function (Request $request, Facility $facility) {
+    $ts = now()->format('Y-m-d H:i:s.u');
+
+    try {
+        $allowed = ['ready', 'inspection', 'blocked', 'in_use', 'dirty'];
+
+        $data = $request->validate([
+            'status' => ['required', Rule::in($allowed)],
+        ]);
+
+        $status = (string) $data['status'];
+        $now    = Carbon::now(config('app.timezone'));
+
+        // helper close
+        $closed = FacilityBlock::query()
+            ->where('facility_id', $facility->id)
+            ->where('start_at', '<', $now)
+            ->where('end_at', '>', $now)
+            ->update(['end_at' => $now, 'active' => false]);
+
+        if ($status === 'inspection') {
+            // buat block inspection
+            $blk = FacilityBlock::create([
+                'hotel_id'     => $facility->hotel_id,
+                'facility_id'  => $facility->id,
+                'start_at'     => $now,
+                'end_at'       => $now->copy()->addHours(8),
+                'active'       => true,
+                'reason'       => 'inspection',
+            ]);
+            return back()->with('facility-status-updated', 'INSPECTION');
+        }
+
+        if ($status === 'blocked') {
+            $blk = FacilityBlock::create([
+                'hotel_id'     => $facility->hotel_id,
+                'facility_id'  => $facility->id,
+                'start_at'     => $now,
+                'end_at'       => $now->copy()->addDays(1),
+                'active'       => true,
+                'reason'       => 'OOO',
+            ]);
+            return back()->with('facility-status-updated', 'BLOCKED');
+        }
+
+        if ($status === 'in_use') {
+            $has = FacilityBooking::query()
+                ->where('facility_id', $facility->id)
+                ->whereNull('deleted_at')
+                ->whereIn('status', [FacilityBooking::STATUS_CONFIRM, FacilityBooking::STATUS_PAID])
+                ->where('start_at', '<=', $now)
+                ->where('end_at', '>',  $now)
+                ->exists();
+
+            if (! $has) {
+                return back()->with('error', 'Tidak bisa set IN USE tanpa booking aktif.');
+            }
+            return back()->with('facility-status-updated', 'IN_USE');
+        }
+
+        if ($status === 'dirty') {
+            return back()->with('info', 'Status DIRTY muncul otomatis setelah booking berakhir.');
+        }
+        return back();
+    } catch (\Throwable $e) {
+        return back()->with('error', 'Quick-status gagal: ' . $e->getMessage());
+    }
+})->name('facilities.quick-status')->middleware(['web', 'auth']);
 
 Route::get('/admin/minibar-receipts/{receipt}/print', function (MinibarReceipt $receipt) {
     // Relasi aman (hanya field pasti ada)
@@ -993,62 +1067,62 @@ Route::get('/admin/invoices/{invoice}/preview-pdf', function (Invoice $invoice) 
     ]);
 })->name('invoices.preview-pdf');
 
-Route::get('/admin/income-items/preview-pdf', function () {
-    $hid   = (int) (session('active_hotel_id') ?? 0);
-    $hotel = Hotel::find($hid);
+// Route::get('/admin/income-items/preview-pdf', function () {
+//     $hid   = (int) (session('active_hotel_id') ?? 0);
+//     $hotel = Hotel::find($hid);
 
-    $rows = IncomeItem::query()
-        ->with('incomeCategory')
-        ->when($hid, fn($q) => $q->where('hotel_id', $hid))
-        ->orderByDesc('date')
-        ->get();
+//     $rows = IncomeItem::query()
+//         ->with('incomeCategory')
+//         ->when($hid, fn($q) => $q->where('hotel_id', $hid))
+//         ->orderByDesc('date')
+//         ->get();
 
-    $columns = [
-        'date'        => ['title' => 'Date',       'class' => 'col-doc',    'show' => true, 'wrap' => false],
-        'category'    => ['title' => 'Category',   'class' => 'col-name',   'show' => true, 'wrap' => true],
-        'description' => ['title' => 'Description', 'class' => 'col-address', 'show' => true, 'wrap' => true],
-        'amount'      => ['title' => 'Amount',     'class' => 'col-doc',    'show' => true, 'wrap' => false],
-    ];
+//     $columns = [
+//         'date'        => ['title' => 'Date',       'class' => 'col-doc',    'show' => true, 'wrap' => false],
+//         'category'    => ['title' => 'Category',   'class' => 'col-name',   'show' => true, 'wrap' => true],
+//         'description' => ['title' => 'Description', 'class' => 'col-address', 'show' => true, 'wrap' => true],
+//         'amount'      => ['title' => 'Amount',     'class' => 'col-doc',    'show' => true, 'wrap' => false],
+//     ];
 
-    $fmtDt = fn($dt) => $dt ? $dt->timezone('Asia/Singapore')->format('Y-m-d H:i') : null;
-    $fmtMoney = fn($v) => $v !== null ? number_format((float) $v, 2, '.', ',') : null;
+//     $fmtDt = fn($dt) => $dt ? $dt->timezone('Asia/Singapore')->format('Y-m-d H:i') : null;
+//     $fmtMoney = fn($v) => $v !== null ? number_format((float) $v, 2, '.', ',') : null;
 
-    $data = $rows->map(function ($it) use ($fmtDt, $fmtMoney) {
-        return [
-            'date'        => $fmtDt($it->date),
-            'category'    => $it->incomeCategory?->name,
-            'description' => $it->description,
-            'amount'      => $fmtMoney($it->amount),
-        ];
-    })->values()->all();
+//     $data = $rows->map(function ($it) use ($fmtDt, $fmtMoney) {
+//         return [
+//             'date'        => $fmtDt($it->date),
+//             'category'    => $it->incomeCategory?->name,
+//             'description' => $it->description,
+//             'amount'      => $fmtMoney($it->amount),
+//         ];
+//     })->values()->all();
 
-    $totalAmount = $rows->sum('amount');
+//     $totalAmount = $rows->sum('amount');
 
-    $logoData    = function_exists('buildPdfLogoData') ? buildPdfLogoData($hotel?->logo ?? null) : null;
-    $orientation = strtolower(request('o', 'portrait'));
-    if (! in_array($orientation, ['portrait', 'landscape'], true)) {
-        $orientation = 'portrait';
-    }
+//     $logoData    = function_exists('buildPdfLogoData') ? buildPdfLogoData($hotel?->logo ?? null) : null;
+//     $orientation = strtolower(request('o', 'portrait'));
+//     if (! in_array($orientation, ['portrait', 'landscape'], true)) {
+//         $orientation = 'portrait';
+//     }
 
-    $pdf = Pdf::loadView('pdf.report', [
-        'title'        => 'Income Items Report',
-        'hotel'        => $hotel,
-        'logoData'     => $logoData,
-        'generatedAt'  => now(),
-        'totalCount'   => count($data) . ' | Total Amount: ' . number_format((float) $totalAmount, 2, '.', ','),
-        'columns'      => $columns,
-        'data'         => $data,
-        'paper'        => 'A4',
-        'orientation'  => $orientation,
-    ])->setPaper('a4', $orientation);
+//     $pdf = Pdf::loadView('pdf.report', [
+//         'title'        => 'Income Items Report',
+//         'hotel'        => $hotel,
+//         'logoData'     => $logoData,
+//         'generatedAt'  => now(),
+//         'totalCount'   => count($data) . ' | Total Amount: ' . number_format((float) $totalAmount, 2, '.', ','),
+//         'columns'      => $columns,
+//         'data'         => $data,
+//         'paper'        => 'A4',
+//         'orientation'  => $orientation,
+//     ])->setPaper('a4', $orientation);
 
-    $pdf->setOption(['isRemoteEnabled' => false]);
+//     $pdf->setOption(['isRemoteEnabled' => false]);
 
-    return response()->stream(fn() => print($pdf->output()), 200, [
-        'Content-Type'        => 'application/pdf',
-        'Content-Disposition' => 'inline; filename="income-items.pdf"',
-    ]);
-})->name('income-items.preview-pdf');
+//     return response()->stream(fn() => print($pdf->output()), 200, [
+//         'Content-Type'        => 'application/pdf',
+//         'Content-Disposition' => 'inline; filename="income-items.pdf"',
+//     ]);
+// })->name('income-items.preview-pdf');
 
 Route::get('/admin/users/preview-pdf', function () {
     $hid   = (int) (session('active_hotel_id') ?? 0);

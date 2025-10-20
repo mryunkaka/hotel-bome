@@ -24,6 +24,11 @@ class CateringPackageResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'catering';
 
+    public static function getNavigationGroup(): string
+    {
+        return 'Facility';
+    }
+
     public static function form(Schema $schema): Schema
     {
         return CateringPackageForm::configure($schema);

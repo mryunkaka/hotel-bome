@@ -18,9 +18,9 @@ class FacilityBlockResource extends Resource
 {
     protected static ?string $model = FacilityBlock::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
-
-    protected static ?string $recordTitleAttribute = 'FacilityBlock';
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedLockClosed;
+    protected static ?string $recordTitleAttribute = 'Facility Block';
+    protected static ?string $navigationLabel = 'Facility Status';
 
     public static function form(Schema $schema): Schema
     {
@@ -42,9 +42,15 @@ class FacilityBlockResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index' => ListFacilityBlocks::route('/'),
+            'index'  => ListFacilityBlocks::route('/'),
             'create' => CreateFacilityBlock::route('/create'),
-            'edit' => EditFacilityBlock::route('/{record}/edit'),
+            'edit'   => EditFacilityBlock::route('/{record}/edit'),
         ];
+    }
+
+    // ⬇️ arahkan menu langsung ke /create (board), seperti RoomBoards
+    public static function getNavigationUrl(): string
+    {
+        return static::getUrl('create');
     }
 }

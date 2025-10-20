@@ -26,8 +26,20 @@ use App\Support\ReservationMath;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+use App\Http\Middleware\VerifyCsrfToken;
+use App\Http\Controllers\Api\CardScanController;
 
 Route::redirect('/', '/admin');
+
+Route::withoutMiddleware([VerifyCsrfToken::class])   // cegah 419
+    ->middleware('api')                              // jangan pakai sesi/csrf
+    ->group(function () {
+        Route::post('/api/card-scan', [CardScanController::class, 'store'])
+            ->name('api.card-scan.store');
+
+        Route::get('/api/card-scans/latest', [CardScanController::class, 'latest'])
+            ->name('api.card-scans.latest');
+    });
 
 Route::patch('/admin/facilities/{facility}/quick-status', function (Request $request, Facility $facility) {
     $ts = now()->format('Y-m-d H:i:s.u');

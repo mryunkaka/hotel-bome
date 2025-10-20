@@ -15,6 +15,11 @@ class Card extends Model
         'last_reservation_id',
     ];
 
+    public function assignments()
+    {
+        return $this->hasMany(CardAssignment::class);
+    }
+
     public function hotel(): BelongsTo
     {
         return $this->belongsTo(Hotel::class);

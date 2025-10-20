@@ -88,6 +88,11 @@ class ReservationGuest extends Model
     |--------------------------------------------------------------------------
     */
 
+    public function cardAssignments()
+    {
+        return $this->hasMany(CardAssignment::class);
+    }
+
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);

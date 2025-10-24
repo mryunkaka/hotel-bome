@@ -1,0 +1,44 @@
+HTTPS setup for RFID Bridge (HttpListener)
+=========================================
+
+Goal: Serve the local API over HTTPS so your https:// web can call it
+without mixed content blocks.
+
+1) Generate a self-signed cert for localhost (Admin PowerShell)
+---------------------------------------------------------------
+$cert = New-SelfSignedCertificate `
+  -DnsName "localhost","127.0.0.1" `
+  -CertStoreLocation "cert:\LocalMachine\My" `
+  -FriendlyName "HotelBomeRFID" `
+  -KeyExportPolicy Exportable -KeySpec Signature
+
+# Export a .cer (public) then trust it
+Export-Certificate -Cert $cert -FilePath C:\rfid.cer
+Import-Certificate -FilePath C:\rfid.cer -CertStoreLocation "cert:\LocalMachine\Root"
+
+2) Bind the cert to 127.0.0.1:8443 (Admin PowerShell)
+------------------------------------------------------
+$thumb = $cert.Thumbprint
+$appid = '{D7C0E1C6-5E2D-4C69-9E0B-3C9FD308E6D1}'   # any GUID
+
+netsh http add sslcert ipport=127.0.0.1:8443 certhash=$thumb appid=$appid
+
+# Grant URL ACL so non-admin app can listen
+netsh http add urlacl url=https://127.0.0.1:8443/ user=BUILTIN\Users
+
+3) Configure RFID Bridge
+------------------------
+- Place rfid.exe and vendor\*.dll together.
+- Copy rfid.env.sample to rfid.env and set:
+    USE_HTTPS=true
+    PORT=8443
+- Run: .\rfid.exe
+- Test: Invoke-RestMethod https://127.0.0.1:8443/health
+
+Notes
+-----
+- For production, prefer a properly trusted certificate instead of self-signed.
+- If your Laravel server uses self-signed TLS, set ALLOW_SELF_SIGNED=true (not recommended).
+- To remove bindings:
+  netsh http delete sslcert ipport=127.0.0.1:8443
+  netsh http delete urlacl url=https://127.0.0.1:8443/

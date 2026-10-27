@@ -10,7 +10,7 @@ use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 
 class AccountLedgersImport implements ToModel, WithHeadingRow
 {
-    public function model(array $row)
+    public function model(array $row): ?\Illuminate\Database\Eloquent\Model
     {
         $hid = (int) (session('active_hotel_id') ?? 0);
 

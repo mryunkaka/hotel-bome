@@ -29,7 +29,7 @@ class IncomeItemsExport implements
         $this->hid = (int) (session('active_hotel_id') ?? 0);
     }
 
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return IncomeItem::query()
             ->with('incomeCategory')

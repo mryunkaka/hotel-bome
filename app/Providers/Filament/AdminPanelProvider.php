@@ -5,7 +5,6 @@ namespace App\Providers\Filament;
 use Filament\Panel;
 use App\Models\Hotel;
 use Filament\PanelProvider;
-use Filament\Pages\Dashboard;
 use Filament\Facades\Filament;
 use App\Filament\Pages\Auth\Login;
 use Filament\Support\Colors\Color;
@@ -41,18 +40,19 @@ class AdminPanelProvider extends PanelProvider
                 if ($hotelId) {
                     $hotel = Hotel::find($hotelId);
                     if ($hotel && $hotel->logo) {
-                        // logo disimpan di disk 'public' → kembalikan URL penuh
-                        /** @var FilesystemAdapter $disk */
                         $disk = Storage::disk('public');
-                        return $disk->url($hotel->logo);
+                        if ($disk->exists($hotel->logo)) {
+                            return $disk->url($hotel->logo);
+                        }
                     }
                 }
-                // fallback jika belum ada hotel/logo
-                return asset('Storage/Images/logo.png');
+
+                // Biarkan nama brand tampil bila hotel belum mempunyai logo valid.
+                return null;
             })
             ->brandName(function () {
                 $hotelId = session('active_hotel_id');
-                return $hotelId ? (Hotel::find($hotelId)->name ?? 'Hotel App') : 'Hotel App';
+                return ($hotelId ? Hotel::find($hotelId)?->name : null) ?: config('app.name', 'Hotel Bome');
             })
             ->brandLogoHeight('4rem')   // sesuaikan tinggi logo
             ->login(Login::class)
@@ -61,9 +61,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
-            ->pages([
-                Dashboard::class,
-            ])
+            ->viteTheme('resources/css/filament/admin/theme.css')
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
             ->widgets([])
             ->middleware([

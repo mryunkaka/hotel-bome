@@ -82,7 +82,9 @@ class Bank extends Model
     public function setAccountNoAttribute($value): void
     {
         // Hilangkan spasi/pemisah umum agar uniknya konsisten
-        $this->attributes['account_no'] = $value ? preg_replace('/[\s\-\.]/', '', trim($value)) : null;
+        $this->attributes['account_no'] = $value === null || $value === ''
+            ? null
+            : preg_replace('/[\s\-\.]/', '', trim((string) $value));
     }
 
     public function setCurrencyAttribute($value): void

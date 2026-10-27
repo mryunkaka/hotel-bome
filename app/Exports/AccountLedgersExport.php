@@ -30,7 +30,7 @@ class AccountLedgersExport implements
         $this->hid = (int) (session('active_hotel_id') ?? 0);
     }
 
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return AccountLedger::query()
             ->when($this->hid, fn($q) => $q->where('hotel_id', $this->hid))

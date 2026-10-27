@@ -1,27 +1,30 @@
 // bridge-auto.js — HID/Serial + Keyboard-Wedge Mirroring (DLock-friendly)
 require('dotenv').config();
+const { UiohookKey } = require('uiohook-napi');
 
 /* ================== TLS mkcert (Laragon) ================== */
-try {
-    const fs = require('fs');
-    const path = require('path');
-    const { Agent, setGlobalDispatcher } = require('undici');
-    const candidates = [
-        path.join(process.env.HOMEPATH || '', 'AppData', 'Local', 'mkcert', 'rootCA.pem'),
-        path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'mkcert', 'rootCA.pem'),
-        'C:\\laragon\\bin\\mkcert\\rootCA.pem',
-        'C:\\laragon\\etc\\ssl\\laragon.crt',
-    ];
-    const found = candidates.find(p => fs.existsSync(p));
-    if (found) {
-        const ca = fs.readFileSync(found, 'utf8');
-        setGlobalDispatcher(new Agent({ connect: { ca } }));
-        console.log('[INFO] TLS: mkcert root CA loaded for Node fetch:', found);
-    } else {
-        console.log('[WARN] Tidak menemukan mkcert rootCA.pem');
+function configureTls() {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const { Agent, setGlobalDispatcher } = require('undici');
+        const candidates = [
+            path.join(process.env.HOMEPATH || '', 'AppData', 'Local', 'mkcert', 'rootCA.pem'),
+            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'mkcert', 'rootCA.pem'),
+            'C:\\laragon\\bin\\mkcert\\rootCA.pem',
+            'C:\\laragon\\etc\\ssl\\laragon.crt',
+        ];
+        const found = candidates.find(p => fs.existsSync(p));
+        if (found) {
+            const ca = fs.readFileSync(found, 'utf8');
+            setGlobalDispatcher(new Agent({ connect: { ca } }));
+            console.log('[INFO] TLS: mkcert root CA loaded for Node fetch:', found);
+        } else {
+            console.log('[WARN] Tidak menemukan mkcert rootCA.pem');
+        }
+    } catch (e) {
+        console.log('[WARN] TLS setup gagal:', e.message);
     }
-} catch (e) {
-    console.log('[WARN] TLS setup gagal:', e.message);
 }
 
 /* ================== Imports & Config ================== */
@@ -97,15 +100,20 @@ function summarizeText(t, max = 300) {
 /* ================== UID helpers ================== */
 function bestUidFromBurst(buffers) {
     const counts = new Map();
+    const asciiCounts = new Map();
     const inc = (hex) => {
         if (!hex) return;
         if (/^(00|FF)+$/i.test(hex)) return;
         counts.set(hex, (counts.get(hex) || 0) + 1);
     };
+    const incAscii = (hex) => asciiCounts.set(hex, (asciiCounts.get(hex) || 0) + 1);
     for (const b of buffers) {
         if (!b || !b.length) continue;
         const ascii = Buffer.from(b).toString('utf8').replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
-        if (/^(?:[0-9A-F]{8}|[0-9A-F]{14}|[0-9A-F]{20})$/i.test(ascii)) inc(ascii.toUpperCase());
+        if (/^(?:[0-9A-F]{8}|[0-9A-F]{14}|[0-9A-F]{20})$/i.test(ascii)) {
+            incAscii(ascii.toUpperCase());
+            continue;
+        }
         const LENS = [4, 7, 10];
         for (const L of LENS) {
             if (b.length >= L) {
@@ -115,6 +123,9 @@ function bestUidFromBurst(buffers) {
                 }
             }
         }
+    }
+    if (asciiCounts.size) {
+        return [...asciiCounts.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0][0];
     }
     if (!counts.size) return null;
     let best = null, bestScore = -1;
@@ -130,6 +141,33 @@ function bestUidFromBurst(buffers) {
 
 function normalizeUid(uid) {
     return String(uid || '').replace(/[^0-9A-F]/gi, '').toUpperCase();
+}
+
+const WEDGE_KEY_MAP = new Map(
+    Object.entries(UiohookKey)
+        .filter(([key]) => /^[0-9A-F]$/i.test(key))
+        .map(([key, keycode]) => [Number(keycode), key.toUpperCase()])
+);
+
+function mapWedgeKey(keycode) {
+    return WEDGE_KEY_MAP.get(Number(keycode)) || '';
+}
+
+function isExcludedHidDevice(deviceInfo) {
+    const product = String(deviceInfo?.product || '').toLowerCase();
+    if (/hidi2c|touch|keyboard|mouse|trackpad|game|controller|consumer control|system control|camera/.test(product)) {
+        return true;
+    }
+
+    if (deviceInfo?.vendorId === 0x04b8) return true;
+    if (deviceInfo?.usagePage === 0x01 && [0x02, 0x06].includes(deviceInfo?.usage)) return true;
+
+    return false;
+}
+
+function isLikelyHidReader(deviceInfo) {
+    const product = String(deviceInfo?.product || '').toLowerCase();
+    return !isExcludedHidDevice(deviceInfo) && /reader|rfid|mifare|smart.?card|dlock/.test(product);
 }
 
 /* ================== HTTP → Laravel (queue+retry) ================== */
@@ -229,12 +267,7 @@ async function autoDetectDevice() {
         } else log('WARN', 'FORCE_DEVICE_PATH tidak ditemukan');
     }
 
-    const skip = d => {
-        const name = (d.product || '').toLowerCase();
-        if (name.includes('hidi2c') || name.includes('touch') || name.includes('keyboard')) return true;
-        if (d.vendorId === 0x04b8) return true;
-        return false;
-    };
+    const skip = isExcludedHidDevice;
 
     const preferred = all.filter(d => !skip(d) && PREFERRED_VID && PREFERRED_PID && d.vendorId === PREFERRED_VID && d.productId === PREFERRED_PID);
     const known = all.filter(d =>
@@ -244,9 +277,10 @@ async function autoDetectDevice() {
             (d.vendorId === 0x076b && [0x5421, 0x5427].includes(d.productId))
         )
     );
-    const vendorUsage = all.filter(d => !skip(d) && (d.usagePage === 0xff00 || d.usagePage === 65280));
-    const generic = all.filter(d => !skip(d) && (d.usagePage === 0x01 || d.usagePage === 1));
-    const candidates = [...preferred, ...known, ...vendorUsage, ...generic];
+    const vendorUsage = all.filter(d =>
+        (d.usagePage === 0xff00 || d.usagePage === 65280) && isLikelyHidReader(d)
+    );
+    const candidates = [...preferred, ...known, ...vendorUsage];
     const unique = [...new Map(candidates.map(d => [d.path, d])).values()];
     log('INFO', `📋 Kandidat: ${unique.length}`);
 
@@ -321,8 +355,8 @@ function startWedge() {
     wedgeActive = true;
     log('INFO', `🧲 Wedge mode aktif (mirroring). Terminator=${WEDGE_TERMINATOR}, hexOnly=${WEDGE_EXPECT_HEX}`);
 
-    // pakai iohook (global keyboard)
-    const iohook = require('iohook');
+    // uiohook-napi menyediakan native N-API build untuk Node modern.
+    const { uIOhook } = require('uiohook-napi');
 
     const flush = (reason) => {
         const raw = buffer;
@@ -345,41 +379,31 @@ function startWedge() {
         return /[0-9A-F]/.test(c);
     };
 
-    iohook.on('keypress', e => {
-        // e.keychar = ASCII code (0 jika non-printable)
-        const kc = e.keychar || 0;
-
+    uIOhook.on('keydown', e => {
         // terminator
-        if (WEDGE_TERMINATOR === 'enter' && e.keycode === 28) { // Enter
+        if (WEDGE_TERMINATOR === 'enter' && e.keycode === UiohookKey.Enter) {
             flush('enter');
             return;
         }
-        if (WEDGE_TERMINATOR === 'tab' && e.keycode === 15) { // Tab
+        if (WEDGE_TERMINATOR === 'tab' && e.keycode === UiohookKey.Tab) {
             flush('tab');
             return;
         }
 
-        // printable
-        if (kc > 0) {
-            const ch = String.fromCharCode(kc);
-            if (WEDGE_EXPECT_HEX) {
-                if (/[0-9A-Fa-f]/.test(ch)) { buffer += ch; scheduleIdleFlush(); }
-            } else {
-                buffer += ch;
-                scheduleIdleFlush();
-            }
-        }
-    });
-
-    iohook.on('keydown', e => {
-        // Backspace → hapus 1
-        if (e.keycode === 14 && buffer.length) {
+        if (e.keycode === UiohookKey.Backspace && buffer.length) {
             buffer = buffer.slice(0, -1);
+            scheduleIdleFlush();
+            return;
+        }
+
+        const ch = mapWedgeKey(e.keycode);
+        if (ch && (!WEDGE_EXPECT_HEX || /[0-9A-F]/.test(ch))) {
+            buffer += ch;
             scheduleIdleFlush();
         }
     });
 
-    iohook.start();
+    uIOhook.start();
 
     startHttpServer({ mode: 'wedge', lastProvider: () => ({ lastUID, lastScanTime }) });
 }
@@ -499,7 +523,8 @@ function startHttpServer(ctx) {
 }
 
 /* ================== Main ================== */
-(async function main() {
+async function main() {
+    configureTls();
     console.log('\n' + '='.repeat(60));
     console.log('  🏨 HOTEL BOME - Mifare Card Reader Bridge v2.2 (HID + Wedge + Serial)');
     console.log('  ⚙️  Auto-Detect • Retry • DLock-Sync (Keyboard-Wedge Mirroring)');
@@ -548,7 +573,19 @@ function startHttpServer(ctx) {
     console.log('  3) Atau gunakan SERIAL_PORT (COMx) jika reader via UART/USB-serial');
     console.log('');
     process.exit(1);
-})().catch(err => {
-    log('ERROR', 'Fatal: ' + (err?.message || err));
-    process.exit(1);
-});
+}
+
+if (require.main === module) {
+    main().catch(err => {
+        log('ERROR', 'Fatal: ' + (err?.message || err));
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    bestUidFromBurst,
+    isExcludedHidDevice,
+    isLikelyHidReader,
+    mapWedgeKey,
+    normalizeUid,
+};

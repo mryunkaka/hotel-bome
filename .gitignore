@@ -25,6 +25,7 @@ Thumbs.db
 # Composer/NPM deps
 /vendor
 /node_modules
+/bridge/node_modules/
 /auth.json
 
 # Laravel build & cache
@@ -39,5 +40,5 @@ Thumbs.db
 # Homestead
 Homestead.json
 Homestead.yaml
-echo "hotelbome.zip" >> .gitignore
-echo "vite.config copy.js" >> .gitignore
+hotelbome.zip
+vite.config copy.js

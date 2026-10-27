@@ -161,7 +161,7 @@ class HotelForm
         }
 
         // simpan sebagai PNG valid
-        $image->encodeByExtension('png');
+        $image->encodeUsingFileExtension('png');
         $image->save($targetAbsolute);
 
         // optimasi lossless (pngquant/optipng bila tersedia)

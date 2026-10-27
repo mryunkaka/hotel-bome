@@ -2,13 +2,13 @@
     "name": "hotel-bome-bridge",
     "version": "2.0.0",
     "description": "Bridge untuk Mifare Card Reader - Hotel BOME",
-    "main": "bridge.js",
+    "main": "bridge-auto.js",
     "type": "commonjs",
     "scripts": {
-        "start": "node bridge.js",
-        "diagnose": "node diagnose-hid.js",
-        "dev": "nodemon bridge.js",
-        "test": "node test-bridge.js"
+        "start": "\"%npm_node_execpath%\" bridge-auto.js",
+        "diagnose": "\"%npm_node_execpath%\" list-hid.js",
+        "dev": "nodemon bridge-auto.js",
+        "test": "\"%npm_node_execpath%\" --test"
     },
     "keywords": [
         "mifare",
@@ -25,12 +25,13 @@
         "express": "^4.21.2",
         "node-hid": "^3.1.0",
         "serialport": "^13.0.0",
+        "uiohook-napi": "^1.5.5",
         "undici": "^7.16.0"
     },
     "devDependencies": {
         "nodemon": "^3.1.9"
     },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=20.18.1"
     }
 }

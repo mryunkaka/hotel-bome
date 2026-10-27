@@ -8,7 +8,7 @@ use Maatwebsite\Excel\Concerns\WithHeadingRow;
 
 class BanksImport implements ToModel, WithHeadingRow
 {
-    public function model(array $row)
+    public function model(array $row): ?\Illuminate\Database\Eloquent\Model
     {
         $hid = (int) (session('active_hotel_id') ?? 0);
 
@@ -17,7 +17,7 @@ class BanksImport implements ToModel, WithHeadingRow
         if (is_numeric($accountNo)) {
             // NB: kalau di Excel aslinya hilang leading zero, kita tidak bisa re-cover.
             // Pastikan user menyimpan kolom ini sebagai Text saat input manual.
-            $accountNo = rtrim(rtrim(sprintf('%.0f', (float) $accountNo), '0'), '.');
+            $accountNo = sprintf('%.0f', (float) $accountNo);
         } elseif (is_string($accountNo)) {
             $accountNo = trim($accountNo);
         }

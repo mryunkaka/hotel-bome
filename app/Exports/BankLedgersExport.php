@@ -30,7 +30,7 @@ class BankLedgersExport implements
         $this->hid = (int) (session('active_hotel_id') ?? 0);
     }
 
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return BankLedger::query()
             ->with(['bank'])

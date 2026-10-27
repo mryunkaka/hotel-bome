@@ -29,7 +29,7 @@ class BookingsExport implements
         $this->hid = (int) (session('active_hotel_id') ?? 0);
     }
 
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return Booking::query()
             // muat relasi + termasuk yang soft-deleted

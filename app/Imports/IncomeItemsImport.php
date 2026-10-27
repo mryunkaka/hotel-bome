@@ -17,7 +17,7 @@ class IncomeItemsImport implements OnEachRow, WithHeadingRow
     protected int $skipped = 0;
     protected array $errors = [];
 
-    public function onRow(Row $row)
+    public function onRow(Row $row): void
     {
         $hid = (int) (session('active_hotel_id') ?? 0);
         $r   = $row->toArray();

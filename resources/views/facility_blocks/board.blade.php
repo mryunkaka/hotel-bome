@@ -31,85 +31,100 @@
 @endphp
 
 <style>
-/* ===== Utilities ===== */
-.hidden{display:none!important;}
-/* ===== Layout ===== */
+.fb-theme{--fb-surface:#fff;--fb-panel:#f5f8fa;--fb-soft:#eceff4;--fb-border:#d8dee9;--fb-text:#2e3440;--fb-muted:#4c566a;--fb-accent:#5e81ac;--fb-accent-hover:#4c6e99;--fb-on-accent:#fff;--fb-shadow:0 1px 2px rgba(46,52,64,.08);color:var(--fb-text);color-scheme:light}
+.dark .fb-theme{--fb-surface:#2e3440;--fb-panel:#3b4252;--fb-soft:#434c5e;--fb-border:rgba(216,222,233,.15);--fb-text:#e5e9f0;--fb-muted:#d8dee9;--fb-accent:#88c0d0;--fb-accent-hover:#8fcede;--fb-on-accent:#2e3440;--fb-shadow:0 8px 24px rgba(0,0,0,.16);color-scheme:dark}
+.fb-theme,.fb-theme *{box-sizing:border-box}
+.fb-theme .hidden{display:none!important}
 .fb-layout{display:grid;gap:1rem}
-@media (min-width:1024px){.fb-layout{grid-template-columns:260px 1fr}}
-
-/* ===== Card ===== */
-.fb-card{border-radius:12px;overflow:hidden;background:#fff;border:1px solid #e5e7eb;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.fb-head{background:#f3f4f6;padding:6px 10px;font:700 11px/1.2 system-ui,Arial;display:flex;justify-content:space-between;align-items:center}
-.fb-badge{font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.15);color:#111}
-.fb-tile{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
-.fb-name{font-size:18px;font-weight:900;line-height:1.1;letter-spacing:.2px;padding:0 8px;text-align:center}
-.tile-button{position:absolute;inset:0;border:0;background:transparent;cursor:pointer}
-
-/* ===== Colors ===== */
-.tile--ready      {background:#1E88E5; color:#fff;}
-.tile--in_use     {background:#6C2AB2; color:#fff;}
-.tile--inspection {background:#FDE047; color:#111;}
-.tile--dirty      {background:#93C5FD; color:#111;}
-.tile--blocked    {background:#6B7280; color:#fff;}
-
-/* ===== Left panel ===== */
-.fb-panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.fb-title{font:800 12px/1.2 system-ui,Arial;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px}
-.fb-legend{display:grid;gap:6px}
-.fb-leg{display:flex;align-items:center;gap:8px;font:700 11px/1.2 system-ui,Arial;color:#111;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:6px 8px}
-.fb-dot{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.15)}
-.fb-count{margin-left:auto;background:#111;color:#fff;font-weight:800;font-size:10px;border-radius:6px;padding:2px 8px}
-
-/* ===== Board header & grid ===== */
-.fb-board-title{font:900 14px/1.2 system-ui,Arial;text-align:center;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px;margin-bottom:10px}
+@media (min-width:1024px){.fb-layout{grid-template-columns:260px minmax(0,1fr)}}
+.fb-panel,.fb-board-title,.fb-card,.fb-cal-wrap{background:var(--fb-surface);color:var(--fb-text);border:1px solid var(--fb-border);border-radius:14px;box-shadow:var(--fb-shadow)}
+.fb-panel{padding:14px;align-self:start}
+.fb-title{font-family:inherit;font-size:12px;font-weight:800;line-height:1.2;color:var(--fb-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.fb-legend{display:grid;gap:7px}
+.fb-leg{display:flex;align-items:center;gap:8px;font-family:inherit;font-size:12px;font-weight:700;line-height:1.3;color:var(--fb-text);background:var(--fb-panel);border:1px solid var(--fb-border);border-radius:9px;padding:8px 9px}
+.fb-dot{width:14px;height:14px;flex:none;border-radius:4px;border:1px solid rgba(46,52,64,.22)}
+.fb-count{margin-left:auto;background:var(--fb-soft);color:var(--fb-text);font-weight:800;font-size:11px;border-radius:999px;padding:3px 8px;min-width:26px;text-align:center}
+.fb-board-title{font-size:15px;font-weight:800;letter-spacing:.01em;padding:12px 14px;margin-bottom:12px}
 .fb-grid{display:grid;gap:.9rem;grid-template-columns:repeat(2,minmax(0,1fr))}
 @media(min-width:640px){.fb-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(min-width:768px){.fb-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(min-width:1024px){.fb-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
-@media(min-width:1280px){.fb-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
-
-/* ===== Misc ===== */
-.fb-card:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(2,6,23,.08);transition:.15s}
-.fb-code{margin-top:8px;font:900 12px/1 system-ui,Arial;letter-spacing:.6px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.85);color:#111;box-shadow:0 1px 2px rgba(0,0,0,.2)}
-
-/* ===== Calendar wrapper ===== */
-.fb-cal-wrap{margin-top:16px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
-.fb-cal-head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e5e7eb}
-.fb-cal-title{font:800 13px/1.2 system-ui,Arial;color:#0f172a}
-.fb-cal-tools{display:flex;gap:8px;align-items:center}
-.fb-select{border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;font:600 12px/1 system-ui}
-#facility-calendar{padding:12px}
-
-/* ===== Modal ===== */
-.fc-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:none;align-items:center;justify-content:center;z-index:100;padding:1rem}
-.fc-modal{width:100%;max-width:520px;background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden;border:1px solid #e5e7eb}
-.fc-modal-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e5e7eb;background:#f8fafc}
-.fc-modal-title{font:800 14px/1.2 system-ui,Arial;color:#0f172a}
-.fc-modal-body{padding:14px 16px;font:600 12px/1.4 system-ui,Arial;color:#0f172a}
-.fc-close{background:transparent;border:none;font-size:16px;cursor:pointer;color:#334155}
+.fb-card{overflow:hidden;transition:transform .15s ease,box-shadow .15s ease}
+.fb-card:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.fb-head{background:var(--fb-panel);color:var(--fb-text);padding:8px 10px;font-family:inherit;font-size:12px;font-weight:700;line-height:1.3;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.fb-badge{font-size:10px;font-weight:800;padding:3px 7px;border-radius:999px;background:var(--fb-soft);color:var(--fb-muted)}
+.fb-tile{height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative}
+.fb-name{font-size:18px;font-weight:800;line-height:1.15;letter-spacing:.01em;padding:0 8px;text-align:center}
+.tile-button{position:absolute;inset:0;border:0;background:transparent;cursor:pointer}
+.tile-button:focus-visible,.fb-empty-link:focus-visible,.fb-select:focus-visible{outline:3px solid var(--fb-accent);outline-offset:2px}
+.tile--ready{background:#5e81ac;color:#fff}
+.tile--in_use{background:#8f6aad;color:#fff}
+.tile--inspection{background:#ebcb8b;color:#2e3440}
+.tile--dirty{background:#81a1c1;color:#2e3440}
+.tile--blocked{background:#616e88;color:#fff}
+.fb-code{margin-top:8px;font:800 11px/1 system-ui,Arial;letter-spacing:.06em;padding:4px 8px;border-radius:999px;background:rgba(46,52,64,.82);color:#eceff4}
+.fb-cal-wrap{margin-top:16px;overflow:hidden}
+.fb-cal-head{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--fb-panel);border-bottom:1px solid var(--fb-border)}
+.fb-cal-title{font-size:14px;font-weight:800;color:var(--fb-text)}
+.fb-cal-tools{display:flex;gap:8px;align-items:center;color:var(--fb-muted)}
+.fb-cal-tools label{font-size:12px;font-weight:700}
+.fb-select{background:var(--fb-surface);color:var(--fb-text);border:1px solid var(--fb-border);border-radius:9px;padding:8px 10px;font-family:inherit;font-size:12px;font-weight:600;line-height:1.2}
+.fb-empty-state,.fb-empty-calendar{padding:14px 16px;border:1px solid var(--fb-border);border-radius:10px;background:var(--fb-panel);color:var(--fb-text);font-family:inherit;font-size:13px;font-weight:600;line-height:1.5}
+.fb-empty-state{margin:12px 0}
+.fb-empty-state p{margin:4px 0 10px;color:var(--fb-muted)}
+.fb-empty-link{display:inline-flex;align-items:center;border-radius:9px;padding:8px 12px;background:var(--fb-accent);color:var(--fb-on-accent);font-weight:700;text-decoration:none;transition:background .15s ease}
+.fb-empty-link:hover{background:var(--fb-accent-hover);color:#fff}
+#facility-calendar{padding:12px;color:var(--fb-text)}
+#facility-calendar .fc{color:var(--fb-text);font-family:inherit}
+#facility-calendar .fc-theme-standard .fc-scrollgrid,#facility-calendar .fc-theme-standard td,#facility-calendar .fc-theme-standard th{border-color:var(--fb-border)}
+#facility-calendar .fc-theme-standard .fc-scrollgrid{background:var(--fb-surface)}
+#facility-calendar .fc-col-header-cell{background:var(--fb-panel)}
+#facility-calendar .fc-col-header-cell-cushion,#facility-calendar .fc-daygrid-day-number,#facility-calendar .fc-list-day-text,#facility-calendar .fc-list-day-side-text{color:var(--fb-text);text-decoration:none}
+#facility-calendar .fc-daygrid-day,#facility-calendar .fc-timegrid-col{background:var(--fb-surface)}
+#facility-calendar .fc-day-other .fc-daygrid-day-number{color:var(--fb-muted);opacity:.65}
+#facility-calendar .fc-day-today{background:color-mix(in srgb,var(--fb-accent) 12%,var(--fb-surface))!important}
+#facility-calendar .fc-toolbar{gap:10px;flex-wrap:wrap}
+#facility-calendar .fc-toolbar-title{color:var(--fb-text);font-size:1.35rem;font-weight:700}
+#facility-calendar .fc-button-primary{background:var(--fb-accent);border-color:var(--fb-accent);color:#fff;border-radius:8px;box-shadow:none}
+#facility-calendar .fc-button-primary:hover,#facility-calendar .fc-button-primary:focus{background:var(--fb-accent-hover);border-color:var(--fb-accent-hover)}
+#facility-calendar .fc-button-primary:disabled{background:var(--fb-soft);border-color:var(--fb-border);color:var(--fb-muted);opacity:1}
+#facility-calendar .fc-button-primary:not(:disabled).fc-button-active,#facility-calendar .fc-button-primary:not(:disabled):active{background:var(--fb-panel);border-color:var(--fb-border);color:var(--fb-text)}
+#facility-calendar .fc-list{border-color:var(--fb-border)}
+#facility-calendar .fc-list-day-cushion{background:var(--fb-panel)}
+#facility-calendar .fc-list-event:hover td{background:var(--fb-soft)}
+.fc-modal-backdrop.fb-theme{position:fixed;inset:0;background:rgba(10,14,20,.72);display:none;align-items:center;justify-content:center;z-index:100;padding:1rem}
+.fc-modal{width:100%;max-width:520px;background:var(--fb-surface);color:var(--fb-text);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;border:1px solid var(--fb-border)}
+.fc-modal-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--fb-border);background:var(--fb-panel)}
+.fc-modal-title{font-size:14px;font-weight:800;color:var(--fb-text)}
+.fc-modal-body{padding:14px 16px;font-family:inherit;font-size:13px;font-weight:600;line-height:1.5;color:var(--fb-text)}
+.fc-close{background:transparent;border:0;border-radius:8px;font-size:16px;cursor:pointer;color:var(--fb-muted);padding:4px 8px}
+.fc-close:hover{background:var(--fb-soft);color:var(--fb-text)}
 .fc-row{display:grid;grid-template-columns:120px 1fr;gap:8px;margin-bottom:8px}
-.fc-row b{color:#475569}
+.fc-row b{color:var(--fb-muted)}
 .rb-radio-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.rb-radio{display:flex;gap:8px;align-items:center;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px}
-.rb-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-.rb-btn-primary{background:#0ea5e9;color:#fff;border:none;border-radius:10px;padding:8px 12px;font:800 12px/1 system-ui;cursor:pointer}
-.rb-btn-secondary{background:#e5e7eb;color:#111;border:none;border-radius:10px;padding:8px 12px;font:800 12px/1 system-ui;cursor:pointer}
+.rb-radio{display:flex;gap:8px;align-items:center;border:1px solid var(--fb-border);border-radius:10px;padding:9px 10px;background:var(--fb-panel)}
+.rb-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.rb-btn-primary,.rb-btn-secondary{border:0;border-radius:9px;padding:9px 12px;font-family:inherit;font-size:12px;font-weight:700;line-height:1.2;cursor:pointer}
+.rb-btn-primary{background:var(--fb-accent);color:var(--fb-on-accent)}
+.rb-btn-primary:hover{background:var(--fb-accent-hover)}
+.rb-btn-secondary{background:var(--fb-soft);color:var(--fb-text)}
+.rb-btn-secondary:hover{filter:brightness(.95)}
+@media(max-width:640px){.fb-cal-head{align-items:flex-start;flex-direction:column}.fb-cal-tools{width:100%;justify-content:space-between}.fb-cal-tools select{max-width:65%}#facility-calendar{padding:8px}#facility-calendar .fc-toolbar-title{font-size:1.1rem}.rb-radio-grid{grid-template-columns:1fr}}
 </style>
 
 {{-- FullCalendar CSS/JS --}}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.22/index.global.min.js"></script>
 
-<div class="fb-layout">
+<div class="fb-layout fb-theme">
     {{-- ===== PANEL KIRI ===== --}}
     <aside class="fb-panel">
         <div class="fb-title">Facility Status</div>
         <div class="fb-legend">
-            <div class="fb-leg"><span class="fb-dot" style="background:#6C2AB2"></span>In Use <span class="fb-count">{{ $stats['in_use'] ?? 0 }}</span></div>
-            <div class="fb-leg"><span class="fb-dot" style="background:#FDE047"></span>Inspection <span class="fb-count">{{ $stats['inspection'] ?? 0 }}</span></div>
-            <div class="fb-leg"><span class="fb-dot" style="background:#93C5FD"></span>Dirty <span class="fb-count">{{ $stats['dirty'] ?? 0 }}</span></div>
-            <div class="fb-leg"><span class="fb-dot" style="background:#6B7280"></span>Blocked <span class="fb-count">{{ $stats['blocked'] ?? 0 }}</span></div>
-            <div class="fb-leg"><span class="fb-dot" style="background:#1E88E5"></span>Ready <span class="fb-count">{{ $stats['ready'] ?? 0 }}</span></div>
+            <div class="fb-leg"><span class="fb-dot" style="background:#8f6aad"></span>In Use <span class="fb-count">{{ $stats['in_use'] ?? 0 }}</span></div>
+            <div class="fb-leg"><span class="fb-dot" style="background:#ebcb8b"></span>Inspection <span class="fb-count">{{ $stats['inspection'] ?? 0 }}</span></div>
+            <div class="fb-leg"><span class="fb-dot" style="background:#81a1c1"></span>Dirty <span class="fb-count">{{ $stats['dirty'] ?? 0 }}</span></div>
+            <div class="fb-leg"><span class="fb-dot" style="background:#616e88"></span>Blocked <span class="fb-count">{{ $stats['blocked'] ?? 0 }}</span></div>
+            <div class="fb-leg"><span class="fb-dot" style="background:#5e81ac"></span>Ready <span class="fb-count">{{ $stats['ready'] ?? 0 }}</span></div>
         </div>
         <div class="mt-3" style="display:flex;justify-content:space-between;font-weight:900;">
             <span>TOTAL FACILITY</span>
@@ -120,6 +135,14 @@
     {{-- ===== GRID + CALENDAR ===== --}}
     <main>
         <div class="fb-board-title">Facilities — Live Status</div>
+
+        @if ($facilities->isEmpty())
+            <div class="fb-empty-state" role="status">
+                <strong>Belum ada fasilitas.</strong>
+                <p>Tambahkan fasilitas agar status dan jadwal pemesanan tampil di halaman ini.</p>
+                <a class="fb-empty-link" href="{{ \App\Filament\Resources\Facilities\FacilityResource::getUrl('create') }}">Tambah fasilitas</a>
+            </div>
+        @endif
 
         <div class="fb-grid">
             @forelse ($facilities as $f)
@@ -161,7 +184,7 @@
             <div class="fb-cal-head">
                 <div class="fb-cal-title">Calendar — Bookings & Blocks</div>
                 <div class="fb-cal-tools">
-                    <label for="facility-filter" style="font:700 12px/1 system-ui;margin-right:6px;color:#334155">Facility:</label>
+                    <label for="facility-filter">Facility:</label>
                     <select id="facility-filter" class="fb-select">
                         <option value="">All Facilities</option>
                         @foreach($facilities as $f)
@@ -170,6 +193,9 @@
                     </select>
                 </div>
             </div>
+            @if (count($calendarEvents) === 0)
+                <div class="fb-empty-calendar" role="status">Belum ada booking atau blok fasilitas dalam rentang kalender ini.</div>
+            @endif
             <div id="facility-calendar" wire:ignore></div>
         </div>
     </main>
@@ -183,7 +209,7 @@
         $modalId = 'modal-facility-'.(int)$f->id;
     @endphp
 
-    <div id="{{ $modalId }}" class="fc-modal-backdrop hidden" data-modal-backdrop wire:ignore>
+    <div id="{{ $modalId }}" class="fc-modal-backdrop fb-theme hidden" data-modal-backdrop wire:ignore>
         <div class="fc-modal">
             <div class="fc-modal-head">
                 <div class="fc-modal-title">Ubah Status — {{ $name }}</div>
@@ -229,7 +255,7 @@
 @endforeach
 
 {{-- ===== Modal Detail Event (kalender) ===== --}}
-<div id="fcModal" class="fc-modal-backdrop hidden" wire:ignore>
+<div id="fcModal" class="fc-modal-backdrop fb-theme hidden" wire:ignore>
     <div class="fc-modal">
         <div class="fc-modal-head">
             <div class="fc-modal-title" id="fcModalTitle">Booking Detail</div>
@@ -319,14 +345,14 @@
     function colorFor(status) {
         switch ((status || '').toUpperCase()) {
             case 'CONFIRM':
-            case 'PAID':         return '#6C2AB2'; // in_use
+            case 'PAID':         return '#8f6aad'; // in_use
             case 'INSPECTION':
-            case 'VCI':          return '#FDE047'; // inspection
+            case 'VCI':          return '#ebcb8b'; // inspection
             case 'BLOCKED':
             case 'OOO':
-            case 'MAINTENANCE':  return '#6B7280'; // blocked
-            case 'DIRTY':        return '#93C5FD'; // dirty
-            default:             return '#1E88E5'; // ready/other
+            case 'MAINTENANCE':  return '#616e88'; // blocked
+            case 'DIRTY':        return '#81a1c1'; // dirty
+            default:             return '#5e81ac'; // ready/other
         }
     }
 
@@ -346,6 +372,7 @@
                 },
                 backgroundColor: colorFor(ev.status),
                 borderColor: colorFor(ev.status),
+                textColor: ['INSPECTION', 'VCI', 'DIRTY'].includes((ev.status || '').toUpperCase()) ? '#2e3440' : '#fff',
             }));
     }
 

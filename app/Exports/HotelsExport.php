@@ -22,7 +22,7 @@ class HotelsExport implements
     ShouldAutoSize,
     WithColumnFormatting
 {
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return Hotel::query()->latest('id');
     }

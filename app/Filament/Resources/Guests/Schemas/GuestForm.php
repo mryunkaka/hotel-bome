@@ -122,15 +122,15 @@ class GuestForm
 
         $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
         if (in_array($ext, ['jpg', 'jpeg'])) {
-            $binary = $image->encodeByExtension('jpg', 82);    // jaga kualitas
+            $binary = $image->encodeUsingFileExtension('jpg', quality: 82);    // jaga kualitas
         } elseif ($ext === 'png') {
-            $binary = $image->encodeByExtension('png', 7);     // kompresi png
+            $binary = $image->encodeUsingFileExtension('png');
         } elseif ($ext === 'webp') {
-            $binary = $image->encodeByExtension('webp', 82);
+            $binary = $image->encodeUsingFileExtension('webp', quality: 82);
         } else {
             // Batasi hanya jenis gambar yang didukung melalui acceptedFileTypes
             // Jika sampai sini, fallback aman ke jpeg tanpa ganti nama:
-            $binary = $image->encodeByExtension('jpg', 82);
+            $binary = $image->encodeUsingFileExtension('jpg', quality: 82);
         }
 
         Storage::disk('public')->put($path, (string) $binary, 'public');

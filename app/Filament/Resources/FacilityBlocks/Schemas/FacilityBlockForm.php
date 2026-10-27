@@ -139,10 +139,12 @@ class FacilityBlockForm
         // BOOKING events
         $bookings = FacilityBooking::query()
             ->when($hid, fn($q) => $q->where('hotel_id', $hid))
-            ->where(function ($q) use ($startRange, $endRange) {
-                $q->whereBetween('start_at', [$startRange, $endRange])
-                    ->orWhereBetween('end_at', [$startRange, $endRange]);
-            })
+            ->whereIn('status', [
+                FacilityBooking::STATUS_CONFIRM,
+                FacilityBooking::STATUS_PAID,
+            ])
+            ->where('start_at', '<=', $endRange)
+            ->where('end_at', '>=', $startRange)
             ->with([
                 'facility:id,name',
                 // butuh salutation supaya accessor display_name bisa jalan
@@ -175,10 +177,8 @@ class FacilityBlockForm
         // BLOCK events
         $blocks = FacilityBlock::query()
             ->when($hid, fn($q) => $q->where('hotel_id', $hid))
-            ->where(function ($q) use ($startRange, $endRange) {
-                $q->whereBetween('start_at', [$startRange, $endRange])
-                    ->orWhereBetween('end_at', [$startRange, $endRange]);
-            })
+            ->where('start_at', '<=', $endRange)
+            ->where('end_at', '>=', $startRange)
             ->with(['facility:id,name'])
             ->get(['id', 'facility_id', 'start_at', 'end_at', 'reason'])
             ->map(function (FacilityBlock $blk) {

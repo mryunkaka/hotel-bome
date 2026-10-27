@@ -15,7 +15,7 @@ class HotelsImport implements OnEachRow, WithHeadingRow
     protected int $skipped = 0;
     protected array $errors = [];
 
-    public function onRow(Row $row)
+    public function onRow(Row $row): void
     {
         $r = $row->toArray();
 

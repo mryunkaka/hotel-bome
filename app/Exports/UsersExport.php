@@ -16,7 +16,7 @@ use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
 class UsersExport implements FromQuery, WithMapping, WithHeadings, WithEvents, ShouldAutoSize, WithColumnFormatting
 {
-    public function query()
+    public function query(): \Illuminate\Database\Eloquent\Builder
     {
         return User::query()
             ->with('hotel')     // <- preload biar gak N+1
